@@ -1,0 +1,91 @@
+{
+  "language": "python",
+  "categories": {
+    "database": {
+      "description": "APIs that access databases",
+      "entries": [
+        { "module": "sqlite3", "symbol": "connect", "label": "Database" },
+        { "module": "psycopg2", "symbol": "connect", "label": "Database" },
+        { "module": "mysql.connector", "symbol": "connect", "label": "Database" },
+        { "module": "sqlalchemy", "symbol": "create_engine", "label": "Database" },
+        { "module": "pymongo", "symbol": "MongoClient", "label": "Database" }
+      ]
+    },
+    "network_send": {
+      "description": "APIs that send data over the network",
+      "entries": [
+        { "module": "urllib.request", "symbol": "urlopen", "label": "Sends_data_over_network" },
+        { "module": "requests", "symbol": "get", "label": "Sends_data_over_network" },
+        { "module": "requests", "symbol": "post", "label": "Sends_data_over_network" },
+        { "module": "requests", "symbol": "request", "label": "Sends_data_over_network" },
+        { "module": "http.client", "symbol": "HTTPConnection", "label": "Sends_data_over_network" },
+        { "module": "socket", "symbol": "send", "label": "Sends_data_over_network" },
+        { "module": "socket", "symbol": "sendall", "label": "Sends_data_over_network" }
+      ]
+    },
+    "network_accept": {
+      "description": "APIs that accept calls over the network",
+      "entries": [
+        { "module": "http.server", "symbol": "HTTPServer", "label": "Accept_call_over_network" },
+        { "module": "socketserver", "symbol": "TCPServer", "label": "Accept_call_over_network" },
+        { "module": "socket", "symbol": "accept", "label": "Accept_call_over_network" },
+        { "module": "flask", "symbol": "Flask", "label": "Accept_call_over_network" },
+        { "module": "fastapi", "symbol": "FastAPI", "label": "Accept_call_over_network" },
+        { "module": "django", "symbol": "*", "label": "Accept_call_over_network" }
+      ]
+    },
+    "messaging": {
+      "description": "Message queues, event streaming, bridges (Kafka, RabbitMQ, SQS, Redis pub/sub, MQTT, etc.)",
+      "entries": [
+        { "module": "kafka", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "confluent_kafka", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "aiokafka", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "pika", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "aio_pika", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "redis", "symbol": "publish", "label": "InterProcess Communication" },
+        { "module": "redis", "symbol": "subscribe", "label": "InterProcess Communication" },
+        { "module": "redis", "symbol": "lpush", "label": "InterProcess Communication" },
+        { "module": "redis", "symbol": "rpop", "label": "InterProcess Communication" },
+        { "module": "redis", "symbol": "blpop", "label": "InterProcess Communication" },
+        { "module": "boto3", "symbol": "client", "label": "InterProcess Communication" },
+        { "module": "aiobotocore", "symbol": "get_session", "label": "InterProcess Communication" },
+        { "module": "celery", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "zmq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "pyzmq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "nats", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "nats.aio", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "paho.mqtt", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "google.cloud.pubsub", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "azure.servicebus", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "stomp", "symbol": "*", "label": "InterProcess Communication" }
+      ]
+    },
+    "ipc": {
+      "description": "Inter-process communication",
+      "entries": [
+        { "module": "multiprocessing", "symbol": "Pipe", "label": "InterProcess Communication" },
+        { "module": "multiprocessing", "symbol": "Queue", "label": "InterProcess Communication" },
+        { "module": "multiprocessing.shared_memory", "symbol": "SharedMemory", "label": "InterProcess Communication" }
+      ]
+    },
+    "thread_comm": {
+      "description": "Thread synchronization/communication",
+      "entries": [
+        { "module": "threading", "symbol": "Lock", "label": "Thread Communication" },
+        { "module": "threading", "symbol": "Semaphore", "label": "Thread Communication" },
+        { "module": "threading", "symbol": "Condition", "label": "Thread Communication" },
+        { "module": "queue", "symbol": "Queue", "label": "Thread Communication" }
+      ]
+    },
+    "fork_spawn": {
+      "description": "Thread/process spawning",
+      "entries": [
+        { "module": "threading", "symbol": "Thread", "label": "Forks Threads / Process" },
+        { "module": "multiprocessing", "symbol": "Process", "label": "Forks Threads / Process" },
+        { "module": "multiprocessing", "symbol": "Pool", "label": "Forks Threads / Process" },
+        { "module": "concurrent.futures", "symbol": "ThreadPoolExecutor", "label": "Forks Threads / Process" },
+        { "module": "concurrent.futures", "symbol": "ProcessPoolExecutor", "label": "Forks Threads / Process" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "language": "typescript",
+  "categories": {
+    "database": {
+      "description": "APIs that access databases",
+      "entries": [
+        { "module": "mysql", "symbol": "*", "label": "Database" },
+        { "module": "pg", "symbol": "*", "label": "Database" },
+        { "module": "mongodb", "symbol": "MongoClient", "label": "Database" },
+        { "module": "mongoose", "symbol": "connect", "label": "Database" },
+        { "module": "typeorm", "symbol": "*", "label": "Database" },
+        { "module": "prisma", "symbol": "*", "label": "Database" }
+      ]
+    },
+    "network_send": {
+      "description": "APIs that send data over the network",
+      "entries": [
+        { "module": "http", "symbol": "request", "label": "Sends_data_over_network" },
+        { "module": "https", "symbol": "request", "label": "Sends_data_over_network" },
+        { "module": "node-fetch", "symbol": "default", "label": "Sends_data_over_network" },
+        { "module": "axios", "symbol": "*", "label": "Sends_data_over_network" },
+        { "module": "net", "symbol": "Socket", "label": "Sends_data_over_network" },
+        { "module": "@grpc/grpc-js", "symbol": "*", "label": "Sends_data_over_network" }
+      ]
+    },
+    "network_accept": {
+      "description": "APIs that accept calls over the network",
+      "entries": [
+        { "module": "http", "symbol": "createServer", "label": "Accept_call_over_network" },
+        { "module": "https", "symbol": "createServer", "label": "Accept_call_over_network" },
+        { "module": "express", "symbol": "*", "label": "Accept_call_over_network" },
+        { "module": "fastify", "symbol": "*", "label": "Accept_call_over_network" },
+        { "module": "@grpc/grpc-js", "symbol": "Server", "label": "Accept_call_over_network" }
+      ]
+    },
+    "messaging": {
+      "description": "Message queues, event streaming, bridges (Kafka, RabbitMQ, SQS, Redis pub/sub, MQTT, etc.)",
+      "entries": [
+        { "module": "kafkajs", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "amqplib", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "ioredis", "symbol": "publish", "label": "InterProcess Communication" },
+        { "module": "ioredis", "symbol": "subscribe", "label": "InterProcess Communication" },
+        { "module": "bullmq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "@aws-sdk/client-sqs", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "@aws-sdk/client-sns", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "@nestjs/microservices", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "zeromq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "nats", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "mqtt", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "@google-cloud/pubsub", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "@azure/service-bus", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "eventemitter3", "symbol": "*", "label": "InterProcess Communication" }
+      ]
+    },
+    "ipc": {
+      "description": "Inter-process communication",
+      "entries": [
+        { "module": "child_process", "symbol": "spawn", "label": "InterProcess Communication" },
+        { "module": "child_process", "symbol": "fork", "label": "InterProcess Communication" },
+        { "module": "cluster", "symbol": "*", "label": "InterProcess Communication" }
+      ]
+    },
+    "thread_comm": {
+      "description": "Thread synchronization",
+      "entries": [
+        { "module": "worker_threads", "symbol": "Worker", "label": "Thread Communication" },
+        { "module": "worker_threads", "symbol": "MessageChannel", "label": "Thread Communication" }
+      ]
+    },
+    "fork_spawn": {
+      "description": "Thread/process spawning",
+      "entries": [
+        { "module": "child_process", "symbol": "spawn", "label": "Forks Threads / Process" },
+        { "module": "child_process", "symbol": "fork", "label": "Forks Threads / Process" },
+        { "module": "worker_threads", "symbol": "Worker", "label": "Forks Threads / Process" },
+        { "module": "cluster", "symbol": "fork", "label": "Forks Threads / Process" }
+      ]
+    }
+  }
+}

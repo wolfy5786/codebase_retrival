@@ -1,0 +1,13 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TEMPORARY: Connect to Neo4j on host machine instead of the neo4j container.
+# Remove or rename this file to revert to containerized Neo4j.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  ingestion-worker:
+    environment:
+      - NEO4J_URI=bolt://host.docker.internal:7687
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

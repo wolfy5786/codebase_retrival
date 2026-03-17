@@ -1,0 +1,48 @@
+# Relationships (Edges)
+
+1. CALLS
+2. SETS
+3. GETS
+4. CONTAINS
+5. INHERITS
+6. IMPLEMENTS
+7. BELONGS_TO
+8. OVERRIDES
+9. EXCEPTION_FLOW      for future 
+10. INSTANTIATES
+
+
+
+Relationship are Label specific enforced at Application level
+Relatinship        From                          To
+CALLS              CodeUnit / Function,         CodeUnit/ Function
+                   Module / File, Network_in,   Module / File, Network_out
+                   Lambda,                      Database
+                   Instantiator / Constructor
+
+CONTAINS           Module / File,               CodeUnit / Function,
+                   Class / Container            InnerClass (only from Class)
+                   Interface                    Object, StaticMember
+
+INHERITS           Class, Interface             Class / Interface
+
+IMPLEMENTS         Interface                    Class
+
+BELONGS_TO         Object                       Class
+
+OVERRIDES          Function                     Function
+
+INSTANTIATES       Constructor                  Class
+
+SETS              CodeUnit / Function,          StaticMember
+                  Module                
+
+GETS              CodeUnit / function,          StaticMember
+                  Module
+
+SPAWNS            Forks Threads / Process      Thread, Function
+                  (spawner)                    (thread/process entry point)
+
+   Note: SPAWNS connects the spawner (e.g. threading.Thread(target=foo)) to the
+   entry point (foo). Forks_Threads_Process is the call site; Thread/Function is the target.
+                   

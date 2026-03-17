@@ -1,0 +1,84 @@
+{
+  "language": "java",
+  "categories": {
+    "database": {
+      "description": "APIs that access databases",
+      "entries": [
+        { "module": "java.sql", "symbol": "DriverManager", "label": "Database" },
+        { "module": "javax.sql", "symbol": "DataSource", "label": "Database" },
+        { "module": "org.hibernate", "symbol": "*", "label": "Database" },
+        { "module": "org.springframework.jdbc", "symbol": "*", "label": "Database" }
+      ]
+    },
+    "network_send": {
+      "description": "APIs that send data over the network",
+      "entries": [
+        { "module": "java.net.http", "symbol": "HttpClient", "label": "Sends_data_over_network" },
+        { "module": "java.net", "symbol": "Socket", "label": "Sends_data_over_network" },
+        { "module": "java.net", "symbol": "URL", "label": "Sends_data_over_network" },
+        { "module": "org.apache.http", "symbol": "*", "label": "Sends_data_over_network" }
+      ]
+    },
+    "network_accept": {
+      "description": "APIs that accept calls over the network",
+      "entries": [
+        { "module": "java.net", "symbol": "ServerSocket", "label": "Accept_call_over_network" },
+        { "module": "javax.servlet", "symbol": "HttpServlet", "label": "Accept_call_over_network" },
+        { "module": "org.springframework.web", "symbol": "*", "label": "Accept_call_over_network" }
+      ]
+    },
+    "messaging": {
+      "description": "Message queues, event streaming, bridges (Kafka, RabbitMQ, SQS, JMS, MQTT, etc.)",
+      "entries": [
+        { "module": "org.apache.kafka", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "com.rabbitmq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "javax.jms", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "jakarta.jms", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "org.springframework.jms", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "org.springframework.kafka", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "org.springframework.cloud.aws.messaging", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "com.amazonaws", "symbol": "SqsClient", "label": "InterProcess Communication" },
+        { "module": "software.amazon.awssdk.services.sqs", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "software.amazon.awssdk.services.sns", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "redis.clients.jedis", "symbol": "JedisPubSub", "label": "InterProcess Communication" },
+        { "module": "redis.clients.jedis", "symbol": "publish", "label": "InterProcess Communication" },
+        { "module": "io.lettuce.core", "symbol": "RedisPubSubAdapter", "label": "InterProcess Communication" },
+        { "module": "org.zeromq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "io.nats.client", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "org.eclipse.paho", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "com.google.cloud.pubsub", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "com.azure", "symbol": "ServiceBusClient", "label": "InterProcess Communication" },
+        { "module": "com.azure.messaging.servicebus", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "org.springframework.cloud.stream", "symbol": "*", "label": "InterProcess Communication" }
+      ]
+    },
+    "ipc": {
+      "description": "Inter-process communication",
+      "entries": [
+        { "module": "java.nio.channels", "symbol": "Pipe", "label": "InterProcess Communication" },
+        { "module": "java.io", "symbol": "PipedInputStream", "label": "InterProcess Communication" },
+        { "module": "java.io", "symbol": "PipedOutputStream", "label": "InterProcess Communication" }
+      ]
+    },
+    "thread_comm": {
+      "description": "Thread synchronization/communication",
+      "entries": [
+        { "module": "java.util.concurrent.locks", "symbol": "ReentrantLock", "label": "Thread Communication" },
+        { "module": "java.util.concurrent", "symbol": "Semaphore", "label": "Thread Communication" },
+        { "module": "java.util.concurrent", "symbol": "BlockingQueue", "label": "Thread Communication" },
+        { "module": "java.util.concurrent", "symbol": "CountDownLatch", "label": "Thread Communication" }
+      ]
+    },
+    "fork_spawn": {
+      "description": "Thread/process spawning",
+      "entries": [
+        { "module": "java.lang", "symbol": "Thread", "label": "Forks Threads / Process" },
+        { "module": "java.util.concurrent", "symbol": "ExecutorService", "label": "Forks Threads / Process" },
+        { "module": "java.util.concurrent", "symbol": "Executors", "label": "Forks Threads / Process" },
+        { "module": "java.lang", "symbol": "ProcessBuilder", "label": "Forks Threads / Process" },
+        { "module": "java.lang", "symbol": "Runtime", "label": "Forks Threads / Process" },
+        { "module": "java.lang", "symbol": "Process", "label": "Forks Threads / Process" }
+      ]
+    }
+  }
+}

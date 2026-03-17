@@ -1,0 +1,73 @@
+{
+  "language": "go",
+  "categories": {
+    "database": {
+      "description": "APIs that access databases",
+      "entries": [
+        { "module": "database/sql", "symbol": "Open", "label": "Database" },
+        { "module": "github.com/lib/pq", "symbol": "*", "label": "Database" },
+        { "module": "go.mongodb.org/mongo-driver", "symbol": "*", "label": "Database" }
+      ]
+    },
+    "network_send": {
+      "description": "APIs that send data over the network",
+      "entries": [
+        { "module": "net/http", "symbol": "Get", "label": "Sends_data_over_network" },
+        { "module": "net/http", "symbol": "Post", "label": "Sends_data_over_network" },
+        { "module": "net/http", "symbol": "Do", "label": "Sends_data_over_network" },
+        { "module": "net", "symbol": "Dial", "label": "Sends_data_over_network" }
+      ]
+    },
+    "network_accept": {
+      "description": "APIs that accept calls over the network",
+      "entries": [
+        { "module": "net/http", "symbol": "ListenAndServe", "label": "Accept_call_over_network" },
+        { "module": "net/http", "symbol": "Server", "label": "Accept_call_over_network" },
+        { "module": "net", "symbol": "Listen", "label": "Accept_call_over_network" }
+      ]
+    },
+    "messaging": {
+      "description": "Message queues, event streaming, bridges (Kafka, RabbitMQ, SQS, NATS, MQTT, etc.)",
+      "entries": [
+        { "module": "github.com/segmentio/kafka-go", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/Shopify/sarama", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/rabbitmq/amqp091-go", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/streadway/amqp", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/redis/go-redis/v9", "symbol": "Client", "label": "InterProcess Communication" },
+        { "module": "github.com/aws/aws-sdk-go-v2/service/sqs", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/aws/aws-sdk-go-v2/service/sns", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/zeromq/goczmq", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/pebbe/zmq4", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/nats-io/nats.go", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/eclipse/paho.mqtt.golang", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "cloud.google.com/go/pubsub", "symbol": "*", "label": "InterProcess Communication" },
+        { "module": "github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus", "symbol": "*", "label": "InterProcess Communication" }
+      ]
+    },
+    "ipc": {
+      "description": "Inter-process communication",
+      "entries": [
+        { "module": "io", "symbol": "Pipe", "label": "InterProcess Communication" },
+        { "module": "os/exec", "symbol": "Cmd", "label": "InterProcess Communication" }
+      ]
+    },
+    "thread_comm": {
+      "description": "Thread synchronization/communication (Go uses goroutines; sync primitives)",
+      "entries": [
+        { "module": "sync", "symbol": "Mutex", "label": "Thread Communication" },
+        { "module": "sync", "symbol": "RWMutex", "label": "Thread Communication" },
+        { "module": "sync", "symbol": "Cond", "label": "Thread Communication" },
+        { "module": "sync", "symbol": "WaitGroup", "label": "Thread Communication" },
+        { "module": "chan", "symbol": "*", "label": "Thread Communication" }
+      ]
+    },
+    "fork_spawn": {
+      "description": "Thread/process spawning (goroutines, exec)",
+      "entries": [
+        { "module": "builtin", "symbol": "go", "label": "Forks Threads / Process" },
+        { "module": "os/exec", "symbol": "Command", "label": "Forks Threads / Process" },
+        { "module": "os/exec", "symbol": "CommandContext", "label": "Forks Threads / Process" }
+      ]
+    }
+  }
+}

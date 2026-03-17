@@ -1,0 +1,116 @@
+# Node Labels each Node can have one or more Labels
+
+1. CodeUnit / Function / Method
+2. Container/Class
+3. StaticMember 
+4. Interface
+5. Module / file
+6. External
+7. Lambda
+8. Database
+9. try (, no implementation)  
+10. except/ catch   (future work, no implementation)
+11. Instantiator / Constructor
+12. Destructor
+13. InnerClass
+14. Object / Instance
+15. Internal
+16: Abstract
+17. Accept_call_over_network
+18. Sends_data_over_network
+19. Enum
+20. Event
+21. Testing
+22. Container
+23. Markup Lang file
+24. SQL / NoSQL script
+25. Documentation
+26. CI/CD
+27. InterProcess Communication
+28. Thread Communication
+29. Forks Threads / Process 
+30. Thread
+
+
+
+Label Definations:
+
+CodeUnit / Function / Method: refers to a callable Function in code
+Mutually Exclusive : Class, Interface, Module, InnerClass, Object, Database
+
+Container / Class : Any User defined Data type, typicall encapsulates attributes and functions
+Mutually Exclusive : Function, Interface, Object, Database, Constructor, Destructor
+
+Interface : Blueprint of Class
+Mutually Exclusive : Function, Class, InnerClass, Object, Database, Constructor, Destructor, StaticMember, Abstract, Enum
+
+Module / File : file containing code
+Mutually Exclusive : Function, InnerClass, Interface, Object, Database, Constructor, Destructor, StaticMember, Abstract
+
+External : Add this Label to All the Nodes which are not implemented by user or not part of the project,
+example - library function, some framework, (this label goes in addition to other labels)
+Mutually Exclusive : Internal
+
+Internal : All nodes which are part of the project and implemented by user are Internal
+Mutually Exclusive : External
+
+Accept_call_over_network: Node which accepts a request / call over network
+
+Sends_data_over_network : Node which sends a request / call over Network
+
+Lambda : use for lamda functions
+
+Database : represent a Database
+
+Instantiator / Constructor: represents a Constructor
+Mutually Exclusive : Function, Interface, Object, Database, Destrucotor, StaticMember
+
+Destructor : represents a Destructor
+Mutually Exclusive : Function, Interface, Object, Database, Constructor, StaticMember
+
+InnerClass class within a class
+Mutually Exclusive : Function, Constructor, Destructor, Module, Database, Object
+
+Object / Instance : Instance of a class
+Mutually Exclusive : Class, Function, InnerClass, Constructor, Destructor, Module, Database, Accept_call_over_network, Sends_data_over_network
+
+Abstract : Abstract method or Class
+Mutually Exclusive : Database, Interface, Module, Object, Constructor, Destructor
+
+StaticMember: A static / gloabal variable or static function
+
+Container: Dockerfile image
+(skip for now; implement logic later)
+
+Markup Lang file: A Markup language file, any files with extension josn, .yaml, etc
+
+SQL / NoSQL script: SQL or NoSQL script files (.sql, etc)
+(skip for now; implement logic later)
+
+Documentation: .md files, . txt files
+(skip for now; implement logic later)
+
+CI/CD: CI/CD pipelines
+
+InterProcess Communication: Node that performs communication between processes (e.g. pipes, shared memory, message queues, sockets for IPC). Additive label; typically applied to Function.
+Mutually Exclusive : (none; additive like External/Internal)
+
+Thread Communication: Node that performs communication or synchronization between threads (e.g. mutex, semaphore, condition variable, queue). Additive label; typically applied to Function.
+Mutually Exclusive : (none; additive like External/Internal)
+
+Forks Threads / Process: Node that spawns or creates a new thread or process (e.g. fork(), pthread_create(), threading.Thread(), multiprocessing.Process()). Additive label; typically applied to Function.
+Mutually Exclusive : (none; additive like External/Internal)
+
+Thread: Represents a thread entry point or runnable—the code that executes in a thread (e.g. target function of threading.Thread, run() of Runnable). Can be a Function or a Class (e.g. extending Thread).
+Mutually Exclusive : (none; can combine with Function or Class)
+
+All Constrains are enforced at Application level
+
+
+
+
+
+
+
+
+
