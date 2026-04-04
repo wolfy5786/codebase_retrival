@@ -48,3 +48,30 @@ class CodebaseDetailResponse(CodebaseResponse):
 
 class CodebaseListResponse(BaseModel):
     codebases: list[CodebaseResponse]
+
+
+class CodebaseManifestEntryResponse(BaseModel):
+    id: UUID
+    codebase_id: UUID
+    file_path: str
+    content_hash: str
+    storage_ref: str
+    indexed_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CodebaseManifestResponse(BaseModel):
+    entries: list[CodebaseManifestEntryResponse]
+
+
+class CodebaseVersionsResponse(BaseModel):
+    versions: list[CodebaseVersionResponse]
+
+
+class CodebaseCurrentVersionResponse(BaseModel):
+    current_version: CodebaseVersionResponse | None
+
+    class Config:
+        from_attributes = True

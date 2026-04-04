@@ -50,6 +50,23 @@ def crawl_phase1(
             
             # Request documentSymbol
             symbols = client.document_symbol(file_path)
+            # #region agent log
+            logger.info(
+                "Phase 1: initial symbols fetched from %s count=%d symbols=%s",
+                file_path,
+                len(symbols) if symbols else 0,
+                [{"name": s.get("name"), "kind": s.get("kind"), "children_count": len(s.get("children", []))} for s in (symbols or [])],
+            )
+            if symbols:
+                first = symbols[0]
+                logger.info(
+                    "Phase 1: first symbol children file=%s first_name=%s children_count=%d children=%s",
+                    file_path,
+                    first.get("name"),
+                    len(first.get("children", [])),
+                    [{"name": c.get("name"), "kind": c.get("kind")} for c in first.get("children", [])],
+                )
+            # #endregion
             if not symbols:
                 logger.debug("Phase 1: no symbols found in %s", file_path)
                 continue
@@ -167,15 +184,6 @@ def _extract_nodes_and_contains(
         
         # Create CONTAINS edge if there's a parent
         if parent_id:
-            # #region agent log
-            try:
-                import json
-                _logpath = Path(__file__).resolve().parents[4] / "debug-064aa2.log"
-                with open(_logpath, "a", encoding="utf-8") as _f:
-                    _f.write(json.dumps({"sessionId":"064aa2","location":"phase1.py:169","message":"CONTAINS edge","data":{"parent_id":parent_id,"child_id":node_id,"name":name,"kind":kind,"file_path":file_path},"timestamp":__import__("time").time_ns()//1000000}) + "\n")
-            except Exception:
-                pass
-            # #endregion
             edge = {
                 "from_id": parent_id,
                 "to_id": node_id,

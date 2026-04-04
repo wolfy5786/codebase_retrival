@@ -33,8 +33,9 @@ All codebase operations are scoped to the current user; admins can access all co
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/v1/codebases/{id}/ingest` | Upload ZIP archive or provide GitHub URL; triggers incremental indexing via SSE |
-| `GET` | `/api/v1/codebases/{id}/manifest` | List all indexed files with hashes |
-| `GET` | `/api/v1/codebases/{id}/versions` | Ingestion version history |
+| `GET` | `/api/v1/codebases/{id}/manifest` | List indexed files with content hashes and storage refs. Supports query params: `limit` (default 1000, max 5000) and `offset` (default 0). |
+| `GET` | `/api/v1/codebases/{id}/versions` | Ingestion version history. Supports `limit` (default 100, max 500) and `offset` (default 0). |
+| `GET` | `/api/v1/codebases/{id}/versions/current` | Return the latest ingestion version for this codebase. If no versions exist, returns `200 { \"current_version\": null }`. |
 
 ### Ingest Request Body (for GitHub URL)
 

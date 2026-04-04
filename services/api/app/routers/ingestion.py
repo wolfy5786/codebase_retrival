@@ -12,6 +12,16 @@ from app.auth.dependencies import CurrentUser
 from app.db.supabase import get_access_token, get_supabase_user, get_supabase_admin
 from app.queue.redis import enqueue_ingestion_job, get_job_status
 from app.schemas.ingestion import IngestionJobResponse
+from app.schemas.codebase import (
+    CodebaseManifestResponse,
+    CodebaseVersionsResponse,
+    CodebaseCurrentVersionResponse,
+)
+from app.services.codebase_data import (
+    list_manifest_entries,
+    list_codebase_versions,
+    get_current_codebase_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +149,48 @@ async def stream_ingestion_job(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/{id}/manifest", response_model=CodebaseManifestResponse)
+async def get_manifest(
+    id: UUID,
+    supabase: Annotated[object, Depends(_supabase_user)],
+    limit: int = 1000,
+    offset: int = 0,
+):
+    """
+    List indexed files + hashes for this codebase.
+    Query params: limit (default 1000, max 5000), offset (default 0).
+    """
+    await _verify_codebase_access(id, supabase)
+    # Defensive fetch implemented in service (fetch limit+offset then slice)
+    entries = list_manifest_entries(supabase, str(id), limit=limit, offset=offset)
+    return CodebaseManifestResponse(entries=entries)
+
+
+@router.get("/{id}/versions", response_model=CodebaseVersionsResponse)
+async def get_versions(
+    id: UUID,
+    supabase: Annotated[object, Depends(_supabase_user)],
+    limit: int = 100,
+    offset: int = 0,
+):
+    """
+    Return ingestion version history for a codebase, ordered by version desc.
+    """
+    await _verify_codebase_access(id, supabase)
+    versions = list_codebase_versions(supabase, str(id), limit=limit, offset=offset)
+    return CodebaseVersionsResponse(versions=versions)
+
+
+@router.get("/{id}/versions/current", response_model=CodebaseCurrentVersionResponse)
+async def get_current_version(
+    id: UUID,
+    supabase: Annotated[object, Depends(_supabase_user)],
+):
+    """
+    Return the current (latest) codebase version or null if none exist.
+    """
+    await _verify_codebase_access(id, supabase)
+    current = get_current_codebase_version(supabase, str(id))
+    return CodebaseCurrentVersionResponse(current_version=current)

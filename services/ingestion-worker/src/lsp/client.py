@@ -131,7 +131,7 @@ class LspClient:
             "capabilities": {
                 "textDocument": {
                     "synchronization": {"dynamicRegistration": False},
-                    "documentSymbol": {"dynamicRegistration": False},
+                    "documentSymbol": {"dynamicRegistration": False, "hierarchicalDocumentSymbolSupport": True},
                 },
             },
         }
