@@ -1,11 +1,16 @@
 """Codebase router — CRUD for codebases (no ingestion)."""
+import logging
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth.dependencies import CurrentUser
-from app.db.supabase import get_access_token, get_supabase_user
+from app.db.supabase import get_access_token, get_supabase_admin, get_supabase_user
+from app.services.neo4j_cleanup import delete_codebase_graph
+from app.services.storage_cleanup import delete_codebase_storage
+
+logger = logging.getLogger(__name__)
 from app.schemas.codebase import (
     CodebaseCreate,
     CodebaseDetailResponse,
@@ -91,10 +96,29 @@ async def update_codebase(
 @router.delete("/{id}", status_code=204)
 async def delete_codebase(
     id: UUID,
+    user: CurrentUser,
     supabase: Annotated[object, Depends(_supabase_user)],
 ):
-    """Delete codebase and all its graph data (CASCADE)."""
+    """Delete Neo4j graph, Storage objects, then codebase row (Postgres CASCADE)."""
+    r = supabase.table("codebase").select("id", "user_id").eq("id", str(id)).execute()
+    if not r.data or len(r.data) == 0:
+        raise HTTPException(status_code=404, detail="Codebase not found")
+    row = r.data[0]
+    if str(row["user_id"]) != str(user["id"]):
+        raise HTTPException(status_code=403, detail="Only the codebase owner can delete")
+
+    try:
+        delete_codebase_graph(str(id))
+    except Exception as e:
+        logger.exception("delete_codebase: Neo4j cleanup failed codebase_id=%s", id)
+        raise HTTPException(status_code=500, detail="Failed to remove graph data") from e
+
+    try:
+        delete_codebase_storage(get_supabase_admin(), supabase, str(id))
+    except Exception as e:
+        logger.exception("delete_codebase: Storage cleanup failed codebase_id=%s", id)
+        raise HTTPException(status_code=500, detail="Failed to remove stored files") from e
+
     r = supabase.table("codebase").delete().eq("id", str(id)).execute()
-    # RLS ensures we can only delete our own; no rows affected = not found or no permission
     if not r.data or len(r.data) == 0:
         raise HTTPException(status_code=404, detail="Codebase not found")

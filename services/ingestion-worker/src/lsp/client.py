@@ -132,6 +132,7 @@ class LspClient:
                 "textDocument": {
                     "synchronization": {"dynamicRegistration": False},
                     "documentSymbol": {"dynamicRegistration": False, "hierarchicalDocumentSymbolSupport": True},
+                    "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
                 },
             },
         }
@@ -172,6 +173,20 @@ class LspClient:
         if not result:
             return []
         return result
+
+    def hover(self, file_path: str, line: int, character: int) -> dict | None:
+        """
+        Request textDocument/hover at 0-based line/character (LSP Position).
+        Returns the hover result dict, or None if the server returns null.
+        """
+        params = {
+            "textDocument": {
+                "uri": f"file://{file_path}",
+            },
+            "position": {"line": line, "character": character},
+        }
+        result = self._send_request("textDocument/hover", params)
+        return result if result else None
 
     def shutdown(self) -> None:
         """Gracefully shutdown the LSP server."""
