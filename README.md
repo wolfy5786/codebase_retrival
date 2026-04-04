@@ -9,6 +9,7 @@ CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds ever
 ## Table of Contents
 
 - [Features](#features)
+- [Demo Graph](#Demo Graph)
 - [System Architecture](#system-architecture)
 - [Tech Stack](#tech-stack)
 - [Ingestion Interfaces](#ingestion-interfaces)
@@ -44,7 +45,11 @@ CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds ever
 - **Containerized monorepo** — all services run via Docker Compose for local development and are AWS-ready for production.
 
 ---
+## Demo Graph
+<img width="406" height="532" alt="visualisation" src="https://github.com/user-attachments/assets/a192f1e2-62d6-452f-adf5-c635898688f5" />
+<img width="406" height="532" alt="visualisation1" src="https://github.com/user-attachments/assets/47a34594-a208-4f67-8ff9-428962f2d036" />
 
+---
 ## System Architecture
 
 ```
