@@ -102,11 +102,11 @@ Repository Scanner
 │ CRAWL STEP 1 — Core nodes only                                                │
 │                                                                               │
 │  For each code file: LSP analyzes the file → identifies nodes                 │
-│  Primary (core) labels: CodeUnit/Function/Method, Container/Class, StaticMember,│
-│  Interface, Module/file, External, Lambda, Database, try, except/catch,        │
-│  Instantiator/Constructor, Destructor, InnerClass, Object/Instance, Internal, │
-│  Abstract, Enum. A node must have a primary label before it can receive any   │
-│  secondary label (see core_system/documentation/Nodes.txt).                    │
+│  Primary (core) labels: CodeUnit/Function/Method, Class, Attribute,            │
+│  Interface, Module/file, Lambda, Database, try, except/catch,                   │
+│  Instantiator/Constructor, Destructor, InnerClass, Object/Instance, Internal,  │
+│  Abstract, Enum, Event, etc. (see Nodes.txt). **External** is added only in     │
+│  Phase 2 when definition resolves outside the repo.                             │
 │                                                                               │
 │  Node creation: LSP identifies nodes → attributes become node attributes       │
 │  Embedding: body + docstring + definition → vector (OpenAI text-embedding-3)   │
@@ -119,18 +119,15 @@ Repository Scanner
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ CRAWL STEP 2 — Secondary labels, tertiary labels, relationships              │
+│ CRAWL STEP 2 — External label (only new node label), tertiary, relationships  │
 │                                                                               │
-│  • Add secondary labels to existing nodes (only nodes with a primary label)   │
-│  • Add relationships (CALLS, SETS, GETS, INHERITS, IMPLEMENTS, BELONGS_TO,   │
-│    OVERRIDES, INSTANTIATES — CONTAINS already drawn in Phase 1)                │
+│  • **Node labels:** Phase 2 may add only the **External** label to existing   │
+│    nodes (definition outside the scanned repo). All other labels are Phase 1  │
+│    or tertiary-by-extension.                                                  │
+│  • Add relationships (CALLS, SETS, GETS, INHERITS, IMPLEMENTS, BELONGS_TO,    │
+│    OVERRIDES, INSTANTIATES — CONTAINS already drawn in Phase 1)               │
 │                                                                               │
-│  • Library/framework matching: we maintain a list of libraries, tools,       │
-│    frameworks, and annotations per language, aligned with secondary labels.   │
-│    For each External node, cross-check against this list; if match found →   │
-│    add the corresponding secondary label to the node.                           │
-│                                                                               │
-│  • Tertiary labels (Container/Dockerfile, Markup Lang file, SQL/NoSQL script,  │
+│  • Tertiary labels (Dockerfile, Markup Lang file, SQL/NoSQL script,            │
 │    Documentation, CI/CD): added by file extension. Ingested differently —     │
 │    entire file = one node, no embedding.                                      │
 │                                                                               │
@@ -363,7 +360,7 @@ Fields:
 - `rank` — position in top-5 (1–5).
 - `score` — combined vector + graph relevance score (0–1).
 - `unit` — name of the code unit (function, class, module, etc.).
-- `labels` — node labels (e.g. `Function`, `Container`, `Module`); semantic type is derived from labels, not a separate `kind` property.
+- `labels` — node labels (e.g. `Function`, `Class`, `Module`); semantic type is derived from labels, not a separate `kind` property.
 - `language` — source language.
 - `file` — relative path from the repository root.
 - `start_line` / `end_line` — exact source range.
@@ -472,7 +469,7 @@ The LLM selects between:
 - **Outer node embedding** — when a class contains methods, the class node's embedding uses method signatures only, not full method bodies, preventing token bloat and over-weighting.
 - **Lean nodes** — Neo4j nodes store only metadata (`storage_ref`, `start_line`, `end_line`, `signature`, `annotations` when present, `docstring`, etc.) and the `embedding` vector. Node type is defined by labels, not a redundant `kind` property. Raw code lives in Supabase Storage; file hashes live in Supabase PostgreSQL.
 - **On-demand snippet retrieval** — at query time, the retrieval service fetches raw lines from Supabase Storage using `storage_ref` + line range. Files are cached in-process per query.
-- **Diversification** — the result aggregator avoids returning multiple near-duplicate chunks from the same file or container.
+- **Diversification** — the result aggregator avoids returning multiple near-duplicate chunks from the same file or class/module scope.
 - **Incremental updates** — file hashes tracked in Supabase `file_manifest`; only re-parses, re-uploads, and re-embeds files that changed.
 
 ---

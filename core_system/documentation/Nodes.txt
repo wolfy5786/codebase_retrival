@@ -1,116 +1,163 @@
-# Node Labels each Node can have one or more Labels
+# Node Labels
 
-1. CodeUnit / Function / Method
-2. Container/Class
-3. StaticMember 
-4. Interface
-5. Module / file
-6. External
-7. Lambda
-8. Database
-9. try (, no implementation)  
-10. except/ catch   (future work, no implementation)
-11. Instantiator / Constructor
-12. Destructor
-13. InnerClass
-14. Object / Instance
-15. Internal
-16: Abstract
-17. Accept_call_over_network
-18. Sends_data_over_network
-19. Enum
-20. Event
-21. Testing
-22. Container
-23. Markup Lang file
-24. SQL / NoSQL script
-25. Documentation
-26. CI/CD
-27. InterProcess Communication
-28. Thread Communication
-29. Forks Threads / Process 
-30. Thread
+Each node can have one or more labels. All constraints are enforced at the application level.
 
+---
 
+## Phase 1 Labels (assigned during node creation)
 
-Label Definations:
+Phase 1 creates all nodes. Every node receives `CodeNode` as the base label.
+File-level nodes receive exactly one of the following mutually exclusive file-type labels,
+determined by file extension (not LSP). Non-file nodes receive only `CodeNode` in Phase 1.
 
-CodeUnit / Function / Method: refers to a callable Function in code
-Mutually Exclusive : Class, Interface, Module, InnerClass, Object, Database
+| #  | Label             | File Extensions                                                    |
+|----|-------------------|--------------------------------------------------------------------|
+| -- | CodeNode          | Base label on every node                                           |
+| 1  | File              | All source files that have LSP support (.java, .py, .cpp, etc.)   |
+| 2  | Dockerfile        | Dockerfile, Dockerfile.*, *.dockerfile                             |
+| 3  | MarkupFile        | .json, .yaml, .yml, .xml, .toml, .ini, .cfg, .properties, .html   |
+| 4  | Documentation     | .md, .txt, .rst, .adoc                                            |
+| 5  | SQLNoSQLScript    | .sql, .cql, .cypher, .mongo, .hql                                 |
+| 6  | CICD              | .github/workflows/*.yml, Jenkinsfile, .gitlab-ci.yml, .circleci/* |
 
-Container / Class : Any User defined Data type, typicall encapsulates attributes and functions
-Mutually Exclusive : Function, Interface, Object, Database, Constructor, Destructor
+Labels 2-6 are mutually exclusive with each other and with File.
+Nodes with labels 2-6 represent the entire file as a single node and are NOT embedded.
 
-Interface : Blueprint of Class
-Mutually Exclusive : Function, Class, InnerClass, Object, Database, Constructor, Destructor, StaticMember, Abstract, Enum
+---
 
-Module / File : file containing code
-Mutually Exclusive : Function, InnerClass, Interface, Object, Database, Constructor, Destructor, StaticMember, Abstract
+## Phase 2 Labels (added to existing nodes; no new nodes created)
 
-External : Add this Label to All the Nodes which are not implemented by user or not part of the project,
-example - library function, some framework, (this label goes in addition to other labels)
-Mutually Exclusive : Internal
+All semantic labels below are assigned during Phase 2 using the tiered system.
 
-Internal : All nodes which are part of the project and implemented by user are Internal
-Mutually Exclusive : External
+### Tier 1 Labels -- Identified by `kind` property (LSP SymbolKind) + source regex
 
-Accept_call_over_network: Node which accepts a request / call over network
+These require no LSP calls and no graph queries beyond the node's own properties.
 
-Sends_data_over_network : Node which sends a request / call over Network
+| #  | Label                        | How Identified                                           | Languages                        | Mutually Exclusive With                                          |
+|----|------------------------------|----------------------------------------------------------|----------------------------------|------------------------------------------------------------------|
+| 7  | CodeUnit / Function / Method | kind == 12 (Function), kind == 6 (Method)                | All                              | Class, Interface, Module, InnerClass, Object, Database           |
+| 8  | Class                        | kind == 5                                                | All                              | Function, Interface, Object, Database, Constructor, Destructor   |
+| 9  | Attribute                    | kind in (7, 8, 13, 14, 22)                               | All                              | (none)                                                           |
+| 10 | Interface                    | kind == 11                                               | Java, C++ (abstract class), TS   | Function, Class, InnerClass, Object, Database, Constructor, Destructor, Attribute, Abstract, Enum |
+| 11 | Module                       | kind == 2                                                | All                              | Function, InnerClass, Interface, Object, Database, Constructor, Destructor, Attribute, Abstract |
+| 12 | Enum                         | kind == 10                                               | All                              | (none beyond standard)                                           |
+| 13 | Instantiator / Constructor   | kind == 9                                                | All                              | Function, Interface, Object, Database, Destructor, Attribute     |
+| 14 | Destructor                   | kind 6/12 + name starts with `~` (C++) or `__del__` (Python) | C++, Python                  | Function, Interface, Object, Database, Constructor, Attribute    |
+| 15 | Lambda                       | kind 6/12 + regex on detail/name: `lambda`, `=>`, `[]`   | All                              | (none; combines with CodeUnit)                                   |
+| 16 | Event                        | kind == 24                                               | All                              | (none)                                                           |
+| 17 | Abstract                     | kind 5 + source regex: `abstract` (Java/TS), `= 0` / `virtual` (C++), `ABC`/`@abstractmethod` (Python) | Java, C++, Python, TS | Database, Interface, Module, Object, Constructor, Destructor |
+| 18 | Internal                     | Default for all project nodes; overridden by External    | All                              | External                                                         |
+| 19 | Testing                      | Annotation/naming regex per language (see below)         | All (language-specific patterns) | (none; additive)                                                 |
+| 20 | Database                     | Annotation/import regex per language (see below)         | All (language-specific patterns) | Function, Class, Interface, Constructor, Destructor              |
+| 21 | Accept_call_over_network     | Annotation regex (framework-specific, see below)         | All (language-specific patterns) | (none; additive)                                                 |
+| 22 | Sends_data_over_network      | API call regex per language (see below)                  | All (language-specific patterns) | (none; additive)                                                 |
+| 23 | InterProcess Communication   | API regex: pipe, shared memory, message queue patterns   | C++, Python, Java, Go           | (none; additive)                                                 |
+| 24 | Thread Communication         | API regex: mutex, semaphore, condition variable patterns | C++, Python, Java                | (none; additive)                                                 |
+| 25 | Forks Threads / Process      | API regex: Thread(), fork(), Process() per language      | All                              | (none; additive)                                                 |
+| 26 | Thread                       | Runnable.run(), thread target detection per language     | Java, C++, Python                | (none; can combine with Function or Class)                       |
+| 27 | JavaClass                    | kind == 5 + language == "java"                           | Java only                        | (language-specific; additive)                                    |
+| 28 | JavaInterface                | kind == 11 + language == "java"                          | Java only                        | (language-specific; additive)                                    |
+| 29 | JavaEnum                     | kind == 10 + language == "java"                          | Java only                        | (language-specific; additive)                                    |
 
-Lambda : use for lamda functions
+Language-specific Tier 1 regex patterns:
 
-Database : represent a Database
+Testing:
+  Java     -- @Test, @Before, @After, @BeforeEach, @AfterEach (JUnit)
+  C++      -- TEST(), TEST_F(), TEST_P(), EXPECT_*, ASSERT_* (gtest)
+  Python   -- test_* function names, @pytest.mark.*, unittest.TestCase subclass
+  JS/TS    -- describe(), it(), test(), expect() (Jest/Mocha/Vitest)
 
-Instantiator / Constructor: represents a Constructor
-Mutually Exclusive : Function, Interface, Object, Database, Destrucotor, StaticMember
+Accept_call_over_network:
+  Java     -- @RequestMapping, @GetMapping, @PostMapping, @RestController (Spring)
+  Python   -- @app.route (Flask), urlpatterns (Django), @router.get (FastAPI)
+  JS/TS    -- app.get(), app.post(), router.get() (Express/Fastify)
+  C++      -- (framework-specific, e.g. Crow, Pistache route macros)
 
-Destructor : represents a Destructor
-Mutually Exclusive : Function, Interface, Object, Database, Constructor, StaticMember
+Sends_data_over_network:
+  Java     -- HttpURLConnection, RestTemplate, WebClient, OkHttpClient
+  Python   -- requests.get/post, urllib.request, aiohttp.ClientSession
+  JS/TS    -- fetch(), axios.*, XMLHttpRequest, node-fetch
+  C++      -- libcurl, Boost.Beast, socket send/connect
 
-InnerClass class within a class
-Mutually Exclusive : Function, Constructor, Destructor, Module, Database, Object
+Database:
+  Java     -- @Repository, @Query, JPA annotations, JDBC
+  Python   -- SQLAlchemy, psycopg2, pymongo, redis-py
+  JS/TS    -- mongoose, knex, sequelize, prisma, TypeORM
+  C++      -- ODBC, sqlite3, pqxx
 
-Object / Instance : Instance of a class
-Mutually Exclusive : Class, Function, InnerClass, Constructor, Destructor, Module, Database, Accept_call_over_network, Sends_data_over_network
+### Tier 3 Labels -- Identified using LSP calls (independent of graph structure)
 
-Abstract : Abstract method or Class
-Mutually Exclusive : Database, Interface, Module, Object, Constructor, Destructor
+| #  | Label            | LSP Method                                  | Languages                | Notes                                                  |
+|----|------------------|---------------------------------------------|--------------------------|--------------------------------------------------------|
+| 30 | Object / Instance | textDocument/hover + typeDefinition         | Java, C++ (NOT Python)   | Added to Attribute nodes for class-scoped fields whose declared type is a reference (non-primitive) type. The field node carries both Attribute and Object/Instance. Python excluded (dynamic types). |
 
-StaticMember: A static / gloabal variable or static function
+Mutually Exclusive: Class, Function, InnerClass, Constructor, Destructor, Module, Database, Accept_call_over_network, Sends_data_over_network
 
-Container: Dockerfile image
-(skip for now; implement logic later)
+### Tier 2 Labels -- Require existing graph structure (nodes + edges from Phase 1 or earlier tiers)
 
-Markup Lang file: A Markup language file, any files with extension josn, .yaml, etc
+| #  | Label      | Depends On                                   | Neo4j Read Query                                                          | Languages |
+|----|------------|----------------------------------------------|---------------------------------------------------------------------------|-----------|
+| 31 | InnerClass | Class label (Tier 1) + CONTAINS (Phase 1)    | MATCH (parent:Class)-[:CONTAINS]->(child:Class) WHERE child.codebase_id=$cid | All       |
+| 32 | External   | All prior labels + definition URI (Tier 3)    | MATCH (n:CodeNode {codebase_id:$cid}) WHERE n.definition_uri IS NOT NULL  | All       |
 
-SQL / NoSQL script: SQL or NoSQL script files (.sql, etc)
-(skip for now; implement logic later)
+InnerClass Mutually Exclusive: Function, Constructor, Destructor, Module, Database, Object
+External Mutually Exclusive: Internal
 
-Documentation: .md files, . txt files
-(skip for now; implement logic later)
+### Future Labels (not yet implemented)
 
-CI/CD: CI/CD pipelines
+| #  | Label          | Notes                          |
+|----|----------------|--------------------------------|
+| 33 | try            | Try block; future work         |
+| 34 | except / catch | Exception handler; future work |
 
-InterProcess Communication: Node that performs communication between processes (e.g. pipes, shared memory, message queues, sockets for IPC). Additive label; typically applied to Function.
-Mutually Exclusive : (none; additive like External/Internal)
+---
 
-Thread Communication: Node that performs communication or synchronization between threads (e.g. mutex, semaphore, condition variable, queue). Additive label; typically applied to Function.
-Mutually Exclusive : (none; additive like External/Internal)
+## Node Properties
 
-Forks Threads / Process: Node that spawns or creates a new thread or process (e.g. fork(), pthread_create(), threading.Thread(), multiprocessing.Process()). Additive label; typically applied to Function.
-Mutually Exclusive : (none; additive like External/Internal)
+### Phase 1 Properties (structural, set during node creation)
 
-Thread: Represents a thread entry point or runnable—the code that executes in a thread (e.g. target function of threading.Thread, run() of Runnable). Can be a Function or a Class (e.g. extending Thread).
-Mutually Exclusive : (none; can combine with Function or Class)
+| Property      | Type   | Description                                                        |
+|---------------|--------|--------------------------------------------------------------------|
+| id            | string | Stable identifier: `{codebase_id}:{file_path}:{start_line}:{name}` |
+| codebase_id   | string | UUID of the codebase; present on every node; all queries filter by this first |
+| name          | string | Symbol name, file name, or logical identifier                      |
+| language      | string | Source language string (e.g. "java", "python", "cpp")              |
+| path          | string | Relative file path from repository root                            |
+| storage_ref   | string | Supabase Storage key: `codebases/{codebase_id}/files/{relative_path}` |
+| start_line    | int    | Start line of source range (1-based inclusive)                     |
+| end_line      | int    | End line of source range (1-based inclusive)                       |
+| kind          | int    | LSP SymbolKind integer; consumed by Phase 2 for label assignment   |
+| signature     | string | From documentSymbol: `name detail`                                 |
+| detail        | string | Raw documentSymbol detail string; Phase 2 regex input              |
 
-All Constrains are enforced at Application level
+### Phase 2 Properties -- Tier 1 (regex extraction from source)
 
+| Property         | Type       | Added To                         | Used By (Tier 2)                              |
+|------------------|------------|----------------------------------|-----------------------------------------------|
+| level            | int        | All nodes                        | Query optimization (derived from primary label)|
+| return_type      | string     | Function, Method                 | OVERRIDES (signature matching)                |
+| parameter_types  | list[str]  | Function, Method                 | OVERRIDES (overload detection)                |
+| access_modifier  | string     | Function, Method, Class, Attribute | OVERRIDES (visibility check)                |
+| modifiers        | list[str]  | All (abstract, static, final, virtual, synchronized, etc.) | Abstract label, OVERRIDES |
+| annotations      | list[str]  | All                              | Testing, Network, Database labels             |
+| is_static        | bool       | Function, Method, Attribute      | CALLS resolution, Attribute classification    |
 
+### Phase 2 Properties -- Tier 3 (LSP calls)
 
+| Property              | Type   | Added To                  | Used By (Tier 2)                    |
+|-----------------------|--------|---------------------------|-------------------------------------|
+| reference_type_detail | string | Attribute (class fields)  | Object/Instance label, BELONGS_TO   |
+| definition_uri        | string | All (textDocument/definition) | External classification         |
 
+### Phase 2 Properties -- Deferred
 
+| Property   | Type      | Notes                                                 |
+|------------|-----------|-------------------------------------------------------|
+| embedding  | vector    | OpenAI embedding vector; added after all labels settled |
+| docstring  | string    | From hover; planned                                    |
+| properties | list/map  | Inner-scope variables; planned                         |
 
+### What nodes do NOT store
 
-
-
+- Raw code body (stored in Supabase Storage; retrieved via storage_ref + start_line/end_line)
+- File content hash (stored in Supabase file_manifest table)

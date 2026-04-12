@@ -1,112 +1,87 @@
-# Phase 1 Implementation Summary
+# Phase 1 Implementation -- Node Creation and CONTAINS
 
-> **Status**: ✅ Complete
-> **Date**: 2026-03-16
-> **Language Support**: Java only (Python, Go, JS/TS, C++, Rust planned for future)
-
----
-
-## What Was Implemented
-
-### Core Architecture
-
-Phase 1 implements the **shared core + per-language adapters** pattern:
-
-- **Shared LSP client** (`lsp/client.py`) - language-agnostic JSON-RPC communication
-- **Shared Phase 1 crawler** (`crawl/phase1.py`) - walks `documentSymbol` responses
-- **Shared base mapper** (`extractor/base.py`) - standard LSP SymbolKind → CodeGraph labels
-- **Per-language adapters**:
-  - `lsp/servers/java.py` - spawns jdtls with correct init options
-  - `extractor/languages/java/mapper.py` - Java-specific label refinements
-
-This design means adding a new language only requires:
-1. A new server adapter in `lsp/servers/<lang>.py`
-2. A new mapper in `extractor/languages/<lang>/mapper.py`
-3. No changes to the crawl or client layers
-
-### Files Created
-
-| File | Purpose |
-|------|---------|
-| `services/ingestion-worker/src/lsp/__init__.py` | LSP layer package |
-| `services/ingestion-worker/src/lsp/client.py` | Shared JSON-RPC LSP client (200+ lines) |
-| `services/ingestion-worker/src/lsp/servers/__init__.py` | Server adapters package |
-| `services/ingestion-worker/src/lsp/servers/java.py` | jdtls spawn + init (100+ lines) |
-| `services/ingestion-worker/src/crawl/__init__.py` | Crawl layer package |
-| `services/ingestion-worker/src/crawl/phase1.py` | Shared documentSymbol walker (200+ lines) |
-| `services/ingestion-worker/src/extractor/__init__.py` | Extractor registry |
-| `services/ingestion-worker/src/extractor/base.py` | Base SymbolKind → label mapping (100+ lines) |
-| `services/ingestion-worker/src/extractor/languages/__init__.py` | Language mappers package |
-| `services/ingestion-worker/src/extractor/languages/java/__init__.py` | Java package |
-| `services/ingestion-worker/src/extractor/languages/java/mapper.py` | Java-specific refinements (60+ lines) |
-| `services/ingestion-worker/src/graph_writer.py` | Neo4j writer with per-node logging (200+ lines) |
-| `neo4j/migrations/001_constraints.cypher` | Constraints & indexes |
-| `neo4j/migrations/README.md` | Migration instructions |
-| `infrastructure/LSP/README.md` | LSP setup guide |
-
-### Files Modified
-
-| File | Changes |
-|------|---------|
-| `docker-compose.yml` | Added Neo4j service; added Neo4j + jdtls env vars to ingestion-worker; added volume mount |
-| `services/ingestion-worker/requirements.txt` | Added `neo4j>=5.0.0`, `lsprotocol>=2023.0.0` |
-| `services/ingestion-worker/src/worker.py` | Integrated Phase 1: filter `.java` files → LSP crawl → Neo4j write |
-| `.env.example` | Already had Neo4j & jdtls vars (no changes needed) |
-| `repository_structure.md` | Updated to reflect actual implementation status |
+> **Status**: Redesigned (documentation)
+> **Scope**: All supported languages (Java, C++, Python, JS/TS, Go, Rust)
+> **Previous**: Phase 1 assigned semantic labels (Class, Method, etc.) during node creation. That responsibility has moved entirely to Phase 2.
 
 ---
 
-## How It Works
+## Design Principles
 
-### Ingestion Flow (Java Files Only)
+1. **Phase 1 creates all nodes.** No new nodes are created after Phase 1.
+2. **Minimal labels only.** Every node gets `CodeNode`. File-level nodes get exactly one mutually exclusive file-type label based on extension. No semantic labels (Class, Method, etc.) are assigned here.
+3. **CONTAINS is the only relationship.** Built directly from the documentSymbol parent-child hierarchy.
+4. **Store structural properties.** Including `kind` and `detail` from LSP so Phase 2 can assign semantic labels without re-querying documentSymbol.
+5. **Multi-threaded parallel processing.** Files are processed in parallel threads within the same LSP session.
+6. **Single batch write.** All nodes and CONTAINS edges are written to Neo4j in one batch after all files are processed.
 
-```
-1. User uploads ZIP via API
-2. API enqueues job in Redis
-3. ingestion-worker dequeues job
-4. Download ZIP from Supabase Storage
-5. Extract to temp directory
-6. Scan for eligible files (scanner.py)
-7. Hash each file (hasher.py)
-8. Filter batch to .java files only
+---
 
---- Phase 1 (NEW) ---
-9. Start jdtls process for workspace
-10. Initialize LSP client
-11. For each Java file:
-    - Send textDocument/didOpen
-    - Send textDocument/documentSymbol
-    - Walk DocumentSymbol tree recursively
-    - Map SymbolKind → labels (base + Java refinements)
-    - Build nodes with: id, codebase_id, name, labels, language, level, path, storage_ref, start_line, end_line, signature
-    - Build CONTAINS edges (parent → child)
-12. Close LSP client
-13. Write all nodes to Neo4j (batch)
-    - Log each node: id, labels, path, name, start_line
-14. Write all CONTAINS edges to Neo4j (batch)
---- End Phase 1 ---
+## What Phase 1 Does
 
-15. Upload all files to Supabase Storage
-16. Upsert file_manifest
-17. Insert codebase_version
-18. Mark job completed
-```
+### File Classification (by extension, no LSP)
 
-### Node Structure (Phase 1)
+Before LSP analysis, the file scanner classifies each file by extension:
+
+| File-Type Label  | Extensions / Patterns                                                        | Processing        |
+|------------------|------------------------------------------------------------------------------|-------------------|
+| File             | .java, .py, .cpp, .c, .h, .hpp, .go, .rs, .js, .ts, .jsx, .tsx, .cs, etc.  | LSP documentSymbol walk |
+| Dockerfile       | Dockerfile, Dockerfile.*, *.dockerfile                                       | Single whole-file node |
+| MarkupFile       | .json, .yaml, .yml, .xml, .toml, .ini, .cfg, .properties, .html             | Single whole-file node |
+| Documentation    | .md, .txt, .rst, .adoc                                                       | Single whole-file node |
+| SQLNoSQLScript   | .sql, .cql, .cypher, .mongo, .hql                                            | Single whole-file node |
+| CICD             | .github/workflows/*.yml, Jenkinsfile, .gitlab-ci.yml, .circleci/*            | Single whole-file node |
+
+**File-type labels (Dockerfile, MarkupFile, Documentation, SQLNoSQLScript, CICD) are mutually exclusive** with each other and with File.
+
+Non-File nodes (Dockerfile, MarkupFile, etc.) produce a single node for the entire file.
+They are NOT processed through LSP and are NOT embedded.
+
+### LSP-Based Node Extraction (File label only)
+
+For files classified as `File`, Phase 1:
+
+1. Opens the file with `textDocument/didOpen`
+2. Requests `textDocument/documentSymbol` (hierarchical)
+3. Walks the DocumentSymbol tree recursively
+4. For each symbol: creates a node with `CodeNode` label and structural properties
+5. For each parent-child pair: creates a CONTAINS edge with `order`
+
+### Node Structure (Phase 1 output)
 
 ```python
 {
-    "id": "codebase_uuid:file_path:start_line:name",
-    "codebase_id": "codebase_uuid",
+    "id": "{codebase_id}:{file_path}:{start_line}:{name}",
+    "codebase_id": "uuid-string",
     "name": "ClassName",
-    "labels": ["Container", "Class", "Internal", "JavaClass"],
+    "labels": ["CodeNode"],           # Only CodeNode; semantic labels added in Phase 2
     "language": "java",
-    "level": 2,
-    "path": "/abs/path/to/File.java",
-    "storage_ref": "codebases/{codebase_id}/files/relative/path/File.java",
+    "path": "src/main/java/com/example/ClassName.java",
+    "storage_ref": "codebases/{codebase_id}/files/src/main/java/com/example/ClassName.java",
     "start_line": 10,
     "end_line": 50,
-    "signature": "public class ClassName"
+    "kind": 5,                        # LSP SymbolKind integer; consumed by Phase 2
+    "signature": "public class ClassName",
+    "detail": "extends BaseClass implements Serializable"
+}
+```
+
+For non-File nodes (Dockerfile, MarkupFile, etc.):
+
+```python
+{
+    "id": "{codebase_id}:{file_path}:1:{filename}",
+    "codebase_id": "uuid-string",
+    "name": "Dockerfile",
+    "labels": ["CodeNode", "Dockerfile"],   # CodeNode + one file-type label
+    "language": "dockerfile",
+    "path": "Dockerfile",
+    "storage_ref": "codebases/{codebase_id}/files/Dockerfile",
+    "start_line": 1,
+    "end_line": 25,
+    "kind": null,                     # No LSP; no SymbolKind
+    "signature": null,
+    "detail": null
 }
 ```
 
@@ -117,38 +92,53 @@ This design means adding a new language only requires:
     "from_id": "parent_node_id",
     "to_id": "child_node_id",
     "type": "CONTAINS",
-    "order": 1  # Declaration order
+    "order": 1    # Declaration order among siblings
 }
 ```
 
-### Label Mapping (Java)
+### Properties NOT Set in Phase 1
 
-| LSP SymbolKind | Base Labels | Java Refinements |
-|----------------|-------------|------------------|
-| Class (5) | `Container`, `Class`, `Internal` | Add `JavaClass`; if nested, add `InnerClass` and remove `Container` |
-| Interface (11) | `Interface`, `Internal` | Add `JavaInterface` |
-| Method (6) | `CodeUnit`, `Method` | - |
-| Constructor (9) | `Instantiator`, `Constructor` | - |
-| Field (8) | `StaticMember` | Confirm if `static` in detail |
-| Enum (10) | `Enum`, `Internal` | Add `JavaEnum` |
-| Function (12) | `CodeUnit`, `Function` | - |
-| Variable (13) | `StaticMember` | - |
+These are deferred to Phase 2 because they depend on semantic label assignment:
+
+- `level` (derived from primary label in Phase 2 Tier 1)
+- `return_type`, `parameter_types` (Phase 2 Tier 1 regex)
+- `access_modifier`, `modifiers`, `is_static` (Phase 2 Tier 1 regex)
+- `annotations` (Phase 2 Tier 1 regex)
+- `reference_type_detail` (Phase 2 Tier 3 LSP)
+- `definition_uri` (Phase 2 Tier 3 LSP)
+- `embedding` (after all labels are settled)
 
 ---
 
-## Out of Scope (Phase 2)
+## Multi-Threading Design
 
-The following are **not implemented** in Phase 1:
+Phase 1 uses file-level parallelism within a single LSP session:
 
-- ❌ Embeddings (OpenAI text-embedding-3-small)
-- ❌ CALLS relationships (callHierarchy/outgoingCalls)
-- ❌ INHERITS relationships (typeHierarchy/supertypes)
-- ❌ IMPLEMENTS relationships (textDocument/implementation)
-- ❌ OVERRIDES, SETS, GETS, INSTANTIATES, SPAWNS relationships
-- ❌ Secondary labels (External, Testing, Accept_call_over_network, etc.)
-- ❌ Tertiary labels (Dockerfile, Markup, SQL, Documentation, CI/CD)
-- ❌ External call classification (LLM-based)
-- ❌ Python, Go, JS/TS, C++, Rust support
+```
+Main Thread:
+  1. Start LSP server for workspace
+  2. Initialize LSP client
+  3. Classify all files by extension
+  4. Partition File-typed files into thread batches
+
+Worker Threads (parallel):
+  For each file in batch:
+    1. textDocument/didOpen
+    2. textDocument/documentSymbol
+    3. Walk tree -> nodes + CONTAINS edges
+    4. Append to thread-local lists
+
+Main Thread (after all workers complete):
+  5. Merge thread-local lists into global lists
+  6. Create non-File nodes (Dockerfile, MarkupFile, etc.) -- single-threaded, no LSP
+  7. Batch write all nodes to Neo4j
+  8. Batch write all CONTAINS edges to Neo4j
+  9. Close LSP client
+```
+
+LSP note: `textDocument/didOpen` and `textDocument/documentSymbol` are safe to interleave
+from multiple threads because requests are keyed by URI. The JSON-RPC client serializes
+writes to stdout, but responses are matched by request ID.
 
 ---
 
@@ -161,148 +151,88 @@ The following are **not implemented** in Phase 1:
 
 ### Indexes
 
-- `node_codebase_id_idx`: On `(codebase_id)` - all queries filter by this
-- `node_path_idx`: On `(path)` - for delete-by-path (incremental updates)
+- `node_codebase_id_idx`: On `(codebase_id)` -- all queries filter by this
+- `node_path_idx`: On `(path)` -- for delete-by-path (incremental updates)
 - `node_codebase_language_idx`: Composite on `(codebase_id, language)`
-- `node_level_idx`: On `(level)` - for hierarchical queries
+- `node_kind_idx`: On `(kind)` -- Phase 2 Tier 1 queries nodes by kind
 
-### Node Labels
+### Node Labels in Neo4j After Phase 1
 
-All nodes have multiple labels. Example: `(:Container:Class:Internal:JavaClass)`
+All nodes: `:CodeNode`
+File-type nodes additionally: `:Dockerfile`, `:MarkupFile`, `:Documentation`, `:SQLNoSQLScript`, `:CICD`
 
-Common labels in Phase 1:
-- `Container`, `Class`, `Interface`, `Enum` (level 2)
-- `CodeUnit`, `Method`, `Function`, `StaticMember` (level 3)
-- `Instantiator`, `Constructor` (level 3)
-- `InnerClass` (level 3)
-- `Internal` (additive - part of project)
-- `JavaClass`, `JavaInterface`, `JavaEnum` (language-specific)
+No semantic labels (`:Class`, `:Method`, etc.) exist after Phase 1.
+Those are added by Phase 2 (see PHASE2_IMPLEMENTATION.md).
 
-### Relationships
+### Relationships After Phase 1
 
-Phase 1 only creates:
-- `CONTAINS`: parent node → child node (e.g., Class → Method)
-- Properties: `order` (declaration order)
+Only `CONTAINS` with property `order`.
 
 ---
 
-## Testing Phase 1
+## Ingestion Flow
 
-### Prerequisites
+```
+1. User uploads ZIP via API
+2. API enqueues job in Redis
+3. ingestion-worker dequeues job
+4. Download ZIP from Supabase Storage
+5. Extract to temp directory
+6. Scan for eligible files (scanner.py)
+7. Hash each file (hasher.py)
+8. Classify files by extension -> File vs Dockerfile vs MarkupFile vs ...
 
-1. Neo4j running (port 7474 browser, 7687 bolt)
-2. jdtls installed at `infrastructure/LSP/jdtls/`
-3. Environment variables set in `.env`
+--- Phase 1 ---
+9.  Start LSP server for workspace (per-language server adapter)
+10. Initialize LSP client
+11. Multi-threaded: for each File-typed file:
+    - textDocument/didOpen
+    - textDocument/documentSymbol
+    - Walk DocumentSymbol tree recursively
+    - Build nodes with CodeNode label + structural properties (id, name, kind, signature, detail, etc.)
+    - Build CONTAINS edges with order
+12. Single-threaded: create whole-file nodes for non-File types (Dockerfile, MarkupFile, etc.)
+13. Close LSP client
+14. Batch write all nodes to Neo4j
+15. Batch write all CONTAINS edges to Neo4j
+--- End Phase 1 ---
 
-### Steps
+--- Phase 2 (see PHASE2_IMPLEMENTATION.md) ---
+16. Tier 1: Regex-based semantic labels + INHERITS/IMPLEMENTS
+17. Tier 3: LSP-based labels (Object/Instance) + CALLS/SETS/GETS
+18. Tier 2: Graph-dependent labels (InnerClass, External) + OVERRIDES/INSTANTIATES/BELONGS_TO/SPAWNS
+--- End Phase 2 ---
 
-1. **Run Neo4j migrations**:
-   ```bash
-   docker compose up neo4j
-   # Open http://localhost:7474
-   # Login with NEO4J_USER/NEO4J_PASSWORD
-   # Run contents of neo4j/migrations/001_constraints.cypher
-   ```
-
-2. **Verify migrations**:
-   ```cypher
-   SHOW CONSTRAINTS;
-   SHOW INDEXES;
-   ```
-
-3. **Start services**:
-   ```bash
-   docker compose up ingestion-worker redis
-   ```
-
-4. **Upload a Java project ZIP**:
-   - Via API: `POST /api/v1/codebases/{id}/ingest`
-   - Via web UI: upload page
-
-5. **Check worker logs**:
-   ```bash
-   docker compose logs -f ingestion-worker
-   ```
-   
-   Expected log output:
-   ```
-   INFO: process_job: found 5 Java files, running Phase 1
-   INFO: Phase 1 crawl started: language=java files=5
-   INFO: jdtls started with PID 1234
-   INFO: LSP initialized for workspace: /tmp/ingest-...
-   DEBUG: Phase 1: extracted 3 nodes, 2 CONTAINS edges from File.java
-   INFO: Phase 1 crawl completed: nodes=15 contains_edges=10
-   INFO: process_job: writing 15 nodes to Neo4j
-   INFO: Node created: id=... labels=['Container', 'Class', 'Internal', 'JavaClass'] path=/tmp/.../File.java name=MyClass start_line=10
-   INFO: Created 10 CONTAINS relationships
-   INFO: write_phase1 completed successfully
-   INFO: Phase 1 completed successfully
-   ```
-
-6. **Verify Neo4j data**:
-   ```cypher
-   // Count nodes
-   MATCH (n {codebase_id: 'your-codebase-id'})
-   RETURN count(n);
-   
-   // Count CONTAINS edges
-   MATCH ({codebase_id: 'your-codebase-id'})-[r:CONTAINS]->()
-   RETURN count(r);
-   
-   // View a sample node
-   MATCH (n {codebase_id: 'your-codebase-id'})
-   RETURN n LIMIT 1;
-   ```
+19. Upload all files to Supabase Storage
+20. Upsert file_manifest
+21. Insert codebase_version
+22. Mark job completed
+```
 
 ---
 
-## Known Limitations
+## What Changed from Previous Phase 1
 
-1. **Java only**: Other languages require implementing their server adapter + mapper
-2. **No embeddings**: Nodes do not have vector embeddings yet (Phase 2)
-3. **No cross-file relationships**: CALLS/INHERITS/IMPLEMENTS not implemented (Phase 2)
-4. **No incremental updates**: Delete-by-path stub exists but not fully tested
-5. **Basic node IDs**: Uses `codebase:path:line:name`; production should use UUID or content hash
-6. **No error recovery**: If jdtls fails, entire job fails (should skip file and continue)
-7. **Single workspace**: All Java files analyzed in one jdtls session (may have memory issues for very large repos)
-
----
-
-## Next Steps (Phase 2)
-
-1. **Add embeddings**:
-   - Create `embedding.py`
-   - Call OpenAI API per node
-   - Store vector in `embedding` property
-   - Create vector index in Neo4j
-
-2. **Implement Phase 2 crawler**:
-   - `crawl/phase2.py`
-   - Use `callHierarchy/outgoingCalls` → CALLS
-   - Use `typeHierarchy/supertypes` → INHERITS
-   - Use `textDocument/implementation` → IMPLEMENTS
-
-3. **Add more languages**:
-   - Python: `lsp/servers/python.py` + `extractor/languages/python/mapper.py`
-   - Go: `lsp/servers/go.py` + `extractor/languages/go/mapper.py`
-   - etc.
-
-4. **External call classifier**:
-   - `external_classifier.py`
-   - Cross-check against `core_system/config/external_apis/*.json`
-   - LLM-based label assignment
-
-5. **Incremental updates**:
-   - Compare file hashes
-   - Delete stale nodes by path
-   - Re-run Phase 1 + 2 only for changed files
+| Aspect                  | Previous (v1)                                      | New (v2)                                          |
+|-------------------------|----------------------------------------------------|----------------------------------------------------|
+| Labels assigned         | CodeNode + semantic (Class, Method, Internal, etc.) | CodeNode + file-type label only                    |
+| Semantic label timing   | During node creation                                | Deferred to Phase 2                                |
+| `kind` property         | Not stored (labels carried the info)                | Stored on node for Phase 2 consumption             |
+| `detail` property       | Not stored                                          | Stored on node for Phase 2 regex                   |
+| `level` property        | Set during Phase 1                                  | Deferred to Phase 2 (depends on semantic labels)   |
+| File-type nodes         | Not implemented (marked "skip for now")             | Implemented (Dockerfile, MarkupFile, etc.)         |
+| Threading               | Single-threaded per file                            | Multi-threaded file-level parallelism              |
+| Languages               | Java only                                           | All supported languages                            |
+| Embedding               | Hover + OpenAI in Phase 1                           | Deferred (after all labels settled)                |
+| Object/Instance on fields | Enriched in Phase 1 via LSP hover                 | Deferred to Phase 2 Tier 3                         |
 
 ---
 
 ## References
 
-- Plan document: `C:\Users\makhi\.cursor\plans\java_lsp_phase_1_nodes_d1169689.plan.md`
+- Phase 2 design: `PHASE2_IMPLEMENTATION.md`
 - Core system design: `core_system/Retrival_system_README.md`
 - Node definitions: `core_system/documentation/Nodes.txt`
+- Relationship definitions: `core_system/documentation/Relationships.txt`
 - LSP setup: `infrastructure/LSP/README.md`
 - Neo4j migrations: `neo4j/migrations/README.md`

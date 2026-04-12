@@ -22,7 +22,11 @@ def get_mapper(language: str):
     if language_lower == "java":
         from .languages.java.mapper import JavaMapper
         return JavaMapper()
-    
+
+    if language_lower in ("cpp", "c", "cxx"):
+        from .languages.cpp.mapper import CppMapper
+        return CppMapper()
+
     # Default to base mapper for unsupported languages
     from .base import BaseMapper
     logger.warning("No specific mapper for language %s, using base mapper", language)

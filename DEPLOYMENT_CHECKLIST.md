@@ -282,11 +282,11 @@ INFO: LSP initialized for workspace: ...
 DEBUG: Phase 1: extracted 4 nodes, 3 CONTAINS edges from HelloWorld.java
 INFO: Phase 1 crawl completed: nodes=4 contains_edges=3
 INFO: process_job: writing 4 nodes to Neo4j
-INFO: Node created: id=... labels=['Container', 'Class', 'Internal', 'JavaClass'] path=.../HelloWorld.java name=HelloWorld start_line=3
-INFO: Node created: id=... labels=['StaticMember'] path=.../HelloWorld.java name=message start_line=4
-INFO: Node created: id=... labels=['Instantiator', 'Constructor'] path=.../HelloWorld.java name=HelloWorld start_line=6
-INFO: Node created: id=... labels=['CodeUnit', 'Method'] path=.../HelloWorld.java name=sayHello start_line=10
-INFO: Node created: id=... labels=['CodeUnit', 'Method'] path=.../HelloWorld.java name=main start_line=14
+INFO: Node created: id=... labels=['CodeNode', 'Class', 'Internal', 'JavaClass'] path=.../HelloWorld.java name=HelloWorld start_line=3
+INFO: Node created: id=... labels=['CodeNode', 'Attribute'] path=.../HelloWorld.java name=message start_line=4
+INFO: Node created: id=... labels=['CodeNode', 'Instantiator', 'Constructor'] path=.../HelloWorld.java name=HelloWorld start_line=6
+INFO: Node created: id=... labels=['CodeNode', 'CodeUnit', 'Method'] path=.../HelloWorld.java name=sayHello start_line=10
+INFO: Node created: id=... labels=['CodeNode', 'CodeUnit', 'Method'] path=.../HelloWorld.java name=main start_line=14
 INFO: Created 3 CONTAINS relationships
 INFO: write_phase1 completed successfully
 INFO: Phase 1 completed successfully

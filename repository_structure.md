@@ -20,6 +20,9 @@ codegraph/
 ├── .env.example                    # Template for required env vars (Supabase, Neo4j, Redis, OpenAI)
 ├── .gitignore
 ├── README.md                       # Project overview, architecture, getting started
+├── PHASE1_IMPLEMENTATION.md        # Phase 1 design: minimal nodes (CodeNode) + CONTAINS + multi-threading
+├── PHASE2_IMPLEMENTATION.md        # Phase 2 design: tiered labels/rels, Strategy pattern, DAG, memcache
+├── DEPLOYMENT_CHECKLIST.md         # Deployment steps for Phase 1
 ├── repository_structure.md         # This file — annotated directory tree
 ├── docker-compose.yml              # Local dev: api, indexer, retrieval, neo4j, redis, web
 ├── docker-compose.prod.yml         # Production overrides for EC2 deployment
@@ -72,35 +75,51 @@ codegraph/
 │   │
 │   ├── ingestion-worker/           # Background indexing worker (Python + LSP per-language)
 │   │   ├── src/
-│   │   │   ├── worker.py           # Main worker: job dequeue, orchestration, Phase 1 integration
-│   │   │   ├── scanner.py          # Repo walker, file filtering, hash comparison
+│   │   │   ├── worker.py           # Main worker: job dequeue, orchestration, Phase 1 + Phase 2
+│   │   │   ├── scanner.py          # Repo walker, file filtering, file-type classification, hash comparison
 │   │   │   ├── hasher.py           # SHA-256 file hashing
 │   │   │   ├── storage_uploader.py # Supabase Storage upload, manifest upsert
 │   │   │   ├── lsp/                # LSP layer — shared client + per-language server adapters
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── client.py       # ✅ Shared JSON-RPC client (language-agnostic); connects to any LSP server via stdio
+│   │   │   │   ├── client.py       # Shared JSON-RPC client (language-agnostic); connects to any LSP server via stdio
+│   │   │   │   ├── hover_parse.py  # Flatten LSP hover payloads to plain text; split signature vs doc
+│   │   │   │   ├── field_type_from_lsp.py  # Resolve field types via hover + typeDefinition (Java/C++)
 │   │   │   │   └── servers/        # Per-language server adapters (spawn + init options only)
 │   │   │   │       ├── __init__.py
-│   │   │   │       └── java.py     # ✅ jdtls: spawn command, workspace data dir, initializationOptions
+│   │   │   │       └── java.py     # jdtls: spawn command, workspace data dir, initializationOptions
 │   │   │   │       # Future: python.py, go.py, typescript.py, javascript.py, cpp.py, rust.py
-│   │   │   ├── crawl/              # Two-phase crawl strategy — shared, language-agnostic
+│   │   │   ├── crawl/              # Two-phase crawl — Phase 1 (nodes+CONTAINS) + Phase 2 (tiered labels+relationships)
 │   │   │   │   ├── __init__.py
-│   │   │   │   └── phase1.py       # ✅ Shared: documentSymbol walk → nodes + CONTAINS (delegates label mapping to extractor)
-│   │   │   │   # Future: phase2.py (callHierarchy, typeHierarchy, definition → remaining relationships + secondary labels)
-│   │   │   ├── extractor/          # Node & relationship extraction — shared base + per-language mappers
-│   │   │   │   ├── __init__.py     # ✅ get_mapper() registry
-│   │   │   │   ├── base.py         # ✅ Shared SymbolKind → CodeGraph label mapping (covers all standard LSP kinds)
+│   │   │   │   ├── phase1.py       # Phase 1: documentSymbol walk → nodes (CodeNode only) + CONTAINS
+│   │   │   │   ├── phase2_base.py  # Phase 2 orchestrator: tier execution, write coordination, memcache (WAL)
+│   │   │   │   ├── phase2_rules.py # Rule dataclasses (LabelRule, RelationshipRule) and RuleRegistry
+│   │   │   │   └── strategies/     # Strategy Pattern: per-language Phase 2 rules
+│   │   │   │       ├── __init__.py # get_strategy(language) registry
+│   │   │   │       ├── common.py   # Shared rules: kind→label mapping, common regex (all languages)
+│   │   │   │       ├── java.py     # Java: extends/implements regex, @Test, @RequestMapping, etc.
+│   │   │   │       ├── cpp.py      # C++: virtual/=0, destructor ~, gtest macros, socket, etc.
+│   │   │   │       ├── python.py   # Python: class(Base), @abstractmethod, pytest, flask, etc.
+│   │   │   │       └── js_ts.py    # JS/TS: extends, arrow functions, jest, express, etc.
+│   │   │   ├── extractor/          # Phase 1 node extraction — shared base + per-language mappers
+│   │   │   │   ├── __init__.py     # get_mapper() registry
+│   │   │   │   ├── base.py         # Shared SymbolKind → structural property extraction
 │   │   │   │   └── languages/      # Per-language refinements on top of base mapping
 │   │   │   │       ├── __init__.py
-│   │   │   │       └── java/
+│   │   │   │       ├── java/
+│   │   │   │       │   ├── __init__.py
+│   │   │   │       │   └── mapper.py   # Java: Phase 1 node property handling
+│   │   │   │       └── cpp/
 │   │   │   │           ├── __init__.py
-│   │   │   │           └── mapper.py   # ✅ Java: InnerClass detection, static modifier, language-specific labels
-│   │   │   │       # Future: python/, go/, typescript/, javascript/, cpp/, rust/
-│   │   │   ├── graph_writer.py     # ✅ Neo4j node/edge writes; logs each node created
+│   │   │   │           └── mapper.py   # C++: Phase 1 node property handling
+│   │   │   │       # Future: python/, go/, typescript/, javascript/, rust/
+│   │   │   ├── graph_writer.py     # Neo4j writes (Phase 1 batch + Phase 2 per-tier) + read queries for Tier 2
+│   │   │   ├── embeddings/         # Embedding generation (runs after Phase 2 completes)
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── build_text.py   # Build transient embedding input text per node
+│   │   │   │   └── openai_embed.py # OpenAI batch embeddings API wrapper
 │   │   │   └── ...
-│   │   │   # Future: embedding.py (OpenAI text-embedding-3-small)
 │   │   │   # Future: external_classifier.py (Async: cross-check external calls → LLM label assignment)
-│   │   ├── requirements.txt        # ✅ Updated with neo4j, lsprotocol
+│   │   ├── requirements.txt
 │   │   ├── Dockerfile
 │   │   └── CONTRIBUTING.md
 │   │
@@ -132,7 +151,7 @@ codegraph/
 ├── core_system/                    # Core retrieval system — documentation & config
 │   ├── Retrival_system_README.md   # Full retrieval design: nodes, relationships, chunking
 │   ├── documentation/
-│   │   ├── Nodes.txt               # Node label definitions (CodeUnit, Container, etc.)
+│   │   ├── Nodes.txt               # Node label definitions (CodeUnit, Class, Attribute, etc.)
 │   │   ├── Relationships.txt      # Edge types (CALLS, CONTAINS, INHERITS, etc.)
 │   │   ├── ExternalAPILists.md     # Schema for external API classification
 │   │   └── module_breakdown.png    # Architecture diagram
@@ -189,7 +208,7 @@ codegraph/
 | **Client** | `apps/web`, `apps/vscode-extension`, `apps/mcp-server` | User-facing entry points; all call same backend |
 | **API Gateway** | `services/api` | Auth, routing, rate limiting; delegates to indexer & retrieval |
 | **Auth** | `services/*/auth/` | JWT verification, RLS, job/query-scoped codebase access |
-| **Indexing** | `services/indexer` | Repo scan → LSP (Phase 1: nodes+CONTAINS, Phase 2: relationships) → embeddings → Neo4j MCP |
+| **Indexing** | `services/ingestion-worker` | Repo scan → Phase 1 (nodes+CONTAINS) → Phase 2 (tiered labels+relationships) → embeddings → Neo4j |
 | **Retrieval** | `services/retrieval` | LLM → Cypher → Neo4j MCP → snippets → results |
 | **Neo4j MCP** | `packages/neo4j-mcp` | MCP server for Cypher execution; used by indexer & retrieval |
 | **Core Design** | `core_system/` | Node/relationship schemas; external API config |
@@ -212,38 +231,59 @@ codegraph/
 | Query strategy logic | `services/retrieval/` |
 | Neo4j MCP tools | `packages/neo4j-mcp/src/tools/` |
 | MCP entrypoint (user tools) | `apps/mcp-server/src/tools/` |
-| Two-phase crawl (Phase 1/2) — shared core | `services/indexer/src/crawl/` |
-| LSP shared client | `services/indexer/src/lsp/client.py` |
-| LSP per-language server adapters | `services/indexer/src/lsp/servers/` |
-| Extractor shared SymbolKind mapping | `services/indexer/src/extractor/base.py` |
-| Extractor per-language mappers | `services/indexer/src/extractor/languages/<lang>/mapper.py` |
-| External call classifier | `services/indexer/src/external_classifier.py` |
-| LSP configs | `infrastructure/lsps/configs/` |
+| Phase 1 crawl (nodes + CONTAINS) | `services/ingestion-worker/src/crawl/phase1.py` |
+| Phase 2 orchestrator (tiered labels + rels) | `services/ingestion-worker/src/crawl/phase2_base.py` |
+| Phase 2 rule definitions | `services/ingestion-worker/src/crawl/phase2_rules.py` |
+| Phase 2 language strategies | `services/ingestion-worker/src/crawl/strategies/` |
+| LSP shared client | `services/ingestion-worker/src/lsp/client.py` |
+| LSP per-language server adapters | `services/ingestion-worker/src/lsp/servers/` |
+| Phase 1 extractor base | `services/ingestion-worker/src/extractor/base.py` |
+| Phase 1 per-language mappers | `services/ingestion-worker/src/extractor/languages/<lang>/mapper.py` |
+| Graph writer (Phase 1 + Phase 2 + queries) | `services/ingestion-worker/src/graph_writer.py` |
+| Embedding generator | `services/ingestion-worker/src/embeddings/` |
+| External call classifier (async, future) | `services/ingestion-worker/src/external_classifier.py` |
 
 ---
 
 ## Indexing Flow (Two-Phase Crawl)
 
-**Phase 1 (✅ Implemented for Java):**
+**Phase 1 -- Node Creation + CONTAINS (see `PHASE1_IMPLEMENTATION.md`):**
 ```
-Repo input (ZIP) → Scanner (hash + filter + Storage + manifest)
-    → Filter .java files
-    → CRAWL STEP 1 (Phase 1): jdtls documentSymbol → core nodes + CONTAINS only
-        - Shared phase1.py walks DocumentSymbol tree
-        - Delegates label mapping to Java mapper
-        - Builds nodes (id, labels, properties, storage_ref, line range)
-        - Builds CONTAINS edges (parent → child)
-    → Graph Writer → Neo4j (batch write nodes + CONTAINS edges)
-        - Logs each node created
-    → Storage upload + manifest upsert
+Repo input (ZIP) → Scanner (hash + filter + file-type classification)
+    → Classify files by extension: File, Dockerfile, MarkupFile, Documentation, SQLNoSQLScript, CICD
+    → Multi-threaded: for each File-typed source file:
+        - LSP documentSymbol → walk tree → nodes (CodeNode label only) + CONTAINS edges
+        - Store structural properties: id, name, kind, signature, detail, line range
+    → Single-threaded: create whole-file nodes for non-File types (CodeNode + file-type label)
+    → Graph Writer → Neo4j (batch write all nodes + CONTAINS edges)
 ```
 
-**Phase 2 (Future):**
+**Phase 2 -- Semantic Labels + Relationships (see `PHASE2_IMPLEMENTATION.md`):**
 ```
-    → CRAWL STEP 2: callHierarchy, typeHierarchy, definition, etc. → secondary/tertiary labels + relationships
-    → Library/framework matching: external calls vs external_apis/*.json → LLM assigns labels
-    → Tertiary labels (Dockerfile, Markup, SQL, CI/CD): entire file = one node, no embedding
-    → Embedding Generator → Graph Writer → Neo4j (embeddings + remaining relationships)
+Tier 1 (multi-threaded, regex/kind-based):
+    → Map kind → semantic labels (Class, Method, Attribute, etc.)
+    → Regex on source → additional labels (Abstract, Testing, Lambda, etc.)
+    → Extract properties: return_type, parameter_types, access_modifier, modifiers, annotations
+    → Regex-extract INHERITS/IMPLEMENTS from source declarations
+    → Write to Neo4j (batch)
+
+Tier 3 (multi-threaded, LSP-based):
+    → hover + typeDefinition → Object/Instance labels + reference_type_detail
+    → textDocument/definition → definition_uri
+    → callHierarchy → CALLS edges
+    → documentHighlight → SETS/GETS edges
+    → Write to Neo4j (batch)
+
+Tier 2 (sequential, DAG-ordered):
+    → Step 2a: InnerClass label + INSTANTIATES edges → write
+    → Step 2b: OVERRIDES + BELONGS_TO edges → write
+    → Step 2c: External label + SPAWNS edges → write
+
+All writes tracked in transactional memcache (WAL) for rollback on failure.
+
+Post-Phase 2:
+    → Embedding Generator → Graph Writer → Neo4j (vectors on settled nodes)
+    → Storage upload + manifest upsert
     → Async: External Call Classifier (LLM label assignment for matched external calls)
 ```
 
@@ -254,9 +294,12 @@ Repo input (ZIP) → Scanner (hash + filter + Storage + manifest)
 ```
 [ZIP / GitHub / local path]
     → api (ingest endpoint; auth: JWT + codebase access)
-    → ingestion-worker (auth: job context) → LSP Phase 1 (✅ Java only) → extract → Neo4j direct write
+    → ingestion-worker (auth: job context)
+        → Phase 1: LSP documentSymbol → nodes (CodeNode) + CONTAINS → batch write to Neo4j
+        → Phase 2: Tier 1 (regex labels) → Tier 3 (LSP labels/rels) → Tier 2 (graph-dep) → write per tier
+        → Embeddings (after Phase 2) → Neo4j
     → Supabase Storage (raw files), file_manifest
-    # Future: Phase 2 → embed → external_classifier
+    → Async: External Call Classifier (LLM label assignment)
 
 [Natural-language query]
     → api (query endpoint; auth: JWT + codebase access)

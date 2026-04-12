@@ -1,6 +1,7 @@
 """
 Repo scanner with file filtering.
-Skips binary, auto-generated, and non-coding files. Source code only for initial scope.
+Skips binary, auto-generated, and ignored files. Eligible: source code plus textual
+config/docs/markup/Dockerfile/etc. (see Phase 1 file classification).
 """
 import logging
 from pathlib import Path
@@ -13,12 +14,23 @@ SKIP_DIRS = frozenset({
     "dist", "build", "target", ".next", ".cache", "vendor",
 })
 
-# Source code extensions (initial scope — config/docs skipped for now)
+# Source code extensions (LSP-backed File type when a server exists)
 ALLOWED_EXTENSIONS = frozenset({
     ".py", ".java", ".kt", ".go", ".js", ".ts", ".tsx", ".jsx",
     ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx",
     ".rs", ".rb", ".php", ".swift", ".m", ".mm", ".cs", ".scala",
 })
+
+# Non-source textual files ingested as whole-file nodes (Phase 1)
+MARKUP_EXTENSIONS = frozenset({
+    ".json", ".yaml", ".yml", ".xml", ".toml", ".ini", ".cfg", ".properties", ".html",
+})
+DOCUMENTATION_EXTENSIONS = frozenset({".md", ".txt", ".rst", ".adoc"})
+SQL_EXTENSIONS = frozenset({".sql", ".cql", ".cypher", ".mongo", ".hql"})
+
+EXTRA_TEXT_EXTENSIONS = MARKUP_EXTENSIONS | DOCUMENTATION_EXTENSIONS | SQL_EXTENSIONS
+
+ELIGIBLE_EXTENSIONS = ALLOWED_EXTENSIONS | EXTRA_TEXT_EXTENSIONS
 
 # Binary/media/auto-generated extensions to skip
 SKIP_EXTENSIONS = frozenset({
@@ -43,13 +55,20 @@ BINARY_CHECK_BYTES = 8192
 NULL_BYTE_THRESHOLD = 0.05
 
 
-def is_eligible_file(file_path: Path) -> bool:
+def is_eligible_file(file_path: Path, rel_parts: tuple[str, ...] = ()) -> bool:
     """
-    Check if a file is eligible for ingestion (source code only).
-    Skips config, docs, binary, auto-generated. Implement later for .json, .md, etc.
+    Check if a file is eligible for ingestion.
+
+    Includes source files, Dockerfiles, CI configs, markup, documentation, and
+    SQL scripts. Skips secrets, binaries, lockfiles, and auto-generated assets.
+
+    rel_parts:
+        Path segments relative to scan root (forward-slash logical parts).
+        Used for `.github/workflows/` and `.circleci/` detection.
     """
     name = file_path.name
     suffix = file_path.suffix.lower()
+    lower_name = name.lower()
 
     # Skip by exact filename
     if name in SKIP_FILENAMES:
@@ -70,12 +89,36 @@ def is_eligible_file(file_path: Path) -> bool:
         logger.debug("is_eligible_file skip extension file_path=%s", file_path)
         return False
 
-    # Allow only source extensions
-    if suffix not in ALLOWED_EXTENSIONS:
-        logger.debug("is_eligible_file skip not in allowlist file_path=%s", file_path)
-        return False
+    # Dockerfile variants (may have no ".dockerfile" suffix only)
+    if lower_name == "dockerfile" or lower_name.startswith("dockerfile.") or lower_name.endswith(
+        ".dockerfile"
+    ):
+        return True
 
-    return True
+    # CI/CD — name-based
+    if lower_name == "jenkinsfile" or lower_name == ".gitlab-ci.yml":
+        return True
+
+    # CI/CD — path under .github/workflows/*.yml|.yaml
+    if rel_parts and ".github" in rel_parts:
+        try:
+            gi = rel_parts.index(".github")
+            if gi + 1 < len(rel_parts) and rel_parts[gi + 1] == "workflows":
+                if suffix in (".yml", ".yaml"):
+                    return True
+        except ValueError:
+            pass
+
+    # CI/CD — anything under .circleci/
+    if rel_parts and ".circleci" in rel_parts:
+        return True
+
+    # Source + extra textual extensions
+    if suffix in ELIGIBLE_EXTENSIONS:
+        return True
+
+    logger.debug("is_eligible_file skip not in allowlist file_path=%s", file_path)
+    return False
 
 
 def is_binary_content(content: bytes) -> bool:
@@ -113,7 +156,7 @@ def scan_directory(root: Path) -> list[Path]:
             skipped_count += 1
             continue
 
-        if not is_eligible_file(path):
+        if not is_eligible_file(path, parts):
             skipped_count += 1
             continue
 

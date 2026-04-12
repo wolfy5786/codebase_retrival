@@ -7,19 +7,6 @@ import logging
 import subprocess
 from typing import Any
 
-from lsprotocol.types import (
-    ClientCapabilities,
-    DocumentSymbol,
-    InitializedParams,
-    InitializeParams,
-    TextDocumentIdentifier,
-    TextDocumentItem,
-)
-from lsprotocol.types import (
-    DidOpenTextDocumentParams,
-    DocumentSymbolParams,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -133,6 +120,8 @@ class LspClient:
                     "synchronization": {"dynamicRegistration": False},
                     "documentSymbol": {"dynamicRegistration": False, "hierarchicalDocumentSymbolSupport": True},
                     "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
+                    "definition": {"dynamicRegistration": False, "linkSupport": True},
+                    "typeDefinition": {"dynamicRegistration": False, "linkSupport": True},
                 },
             },
         }
@@ -187,6 +176,77 @@ class LspClient:
         }
         result = self._send_request("textDocument/hover", params)
         return result if result else None
+
+    def type_definition(self, file_path: str, line: int, character: int) -> dict | list | None:
+        """
+        Request textDocument/typeDefinition at 0-based line/character.
+        Returns Location, list of Location, list of LocationLink, or None.
+        """
+        params = {
+            "textDocument": {"uri": f"file://{file_path}"},
+            "position": {"line": line, "character": character},
+        }
+        try:
+            return self._send_request("textDocument/typeDefinition", params)
+        except Exception as e:
+            logger.debug(
+                "type_definition error at %s:%d:%d: %s",
+                file_path, line, character, e,
+            )
+            return None
+
+    def call_hierarchy_prepare(self, file_path: str, line: int, character: int) -> list[dict]:
+        """
+        Request textDocument/prepareCallHierarchy at a position.
+        Returns a list of CallHierarchyItem dicts, or [] if unsupported/no result.
+        """
+        params = {
+            "textDocument": {"uri": f"file://{file_path}"},
+            "position": {"line": line, "character": character},
+        }
+        try:
+            result = self._send_request("textDocument/prepareCallHierarchy", params)
+        except Exception as e:
+            logger.debug("call_hierarchy_prepare error at %s:%d:%d: %s", file_path, line, character, e)
+            return []
+        if not result:
+            return []
+        return result if isinstance(result, list) else []
+
+    def call_hierarchy_outgoing(self, item: dict) -> list[dict]:
+        """
+        Request callHierarchy/outgoingCalls for a prepared CallHierarchyItem.
+        Returns a list of CallHierarchyOutgoingCall dicts, or [] on failure.
+        """
+        params = {"item": item}
+        try:
+            result = self._send_request("callHierarchy/outgoingCalls", params)
+        except Exception as e:
+            logger.debug("call_hierarchy_outgoing error for item %s: %s", item.get("name"), e)
+            return []
+        if not result:
+            return []
+        return result if isinstance(result, list) else []
+
+    def document_highlight(self, file_path: str, line: int, character: int) -> list[dict]:
+        """
+        Request textDocument/documentHighlight at a position.
+        Returns a list of DocumentHighlight dicts with `range` and `kind`:
+          kind 1 = text, kind 2 = read, kind 3 = write.
+        Returns [] on failure or no result.
+        """
+        params = {
+            "textDocument": {"uri": f"file://{file_path}"},
+            "position": {"line": line, "character": character},
+        }
+        try:
+            result = self._send_request("textDocument/documentHighlight", params)
+        except Exception as e:
+            logger.debug("document_highlight error at %s:%d:%d: %s", file_path, line, character, e)
+            return []
+        if not result:
+            return []
+        return result if isinstance(result, list) else []
 
     def shutdown(self) -> None:
         """Gracefully shutdown the LSP server."""

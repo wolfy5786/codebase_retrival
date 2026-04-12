@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 class GraphWriter:
     """
     Writes nodes and relationships to Neo4j.
-    Phase 1: nodes + CONTAINS relationships only.
+    Phase 1: structural nodes (``kind``, ``detail``, etc.) + CONTAINS.
+    Phase 2 Tier 1: ``apply_phase2_tier1`` adds semantic labels and Tier-1 properties.
     """
     
     def __init__(self):
@@ -122,7 +123,7 @@ class GraphWriter:
                 logger.warning("Node has no labels, skipping: %s", node.get("id"))
                 return
             
-            # Build label string for Cypher (e.g. :Container:Class:Internal)
+            # Build label string for Cypher (e.g. :Class:Internal:JavaClass)
             label_str = ":" + ":".join(labels)
             
             # Extract properties
@@ -131,12 +132,15 @@ class GraphWriter:
                 "codebase_id": node.get("codebase_id"),
                 "name": node.get("name"),
                 "language": node.get("language"),
-                "level": node.get("level"),
                 "path": node.get("path"),
                 "storage_ref": node.get("storage_ref"),
                 "start_line": node.get("start_line"),
                 "end_line": node.get("end_line"),
+                "kind": node.get("kind"),
+                "detail": node.get("detail"),
                 "signature": node.get("signature"),
+                # TODO: uncomment when ready for production — skipped during development to avoid OpenAI credit consumption
+                # "embedding": node.get("embedding"),
             }
             
             # Remove None values
@@ -196,6 +200,98 @@ class GraphWriter:
             logger.exception("Failed to create CONTAINS edges: %s", e)
             raise
     
+    def apply_phase2_tier1(
+        self,
+        updates: list[dict],
+        codebase_id: str,
+    ) -> None:
+        """
+        Apply Phase 2 Tier 1: add labels and set properties on existing nodes.
+
+        Each item must have ``id``, ``labels_to_add`` (list of strings), and
+        ``properties`` (dict). Labels must be safe identifier-like tokens.
+        """
+        if not updates:
+            logger.info("apply_phase2_tier1: no updates (codebase_id=%s)", codebase_id)
+            return
+
+        logger.info(
+            "apply_phase2_tier1 started: rows=%d codebase_id=%s",
+            len(updates),
+            codebase_id,
+        )
+
+        try:
+            with self.driver.session() as session:
+                by_label: dict[str, list[str]] = {}
+                prop_rows: list[dict[str, Any]] = []
+
+                for row in updates:
+                    nid = row.get("id")
+                    if not nid:
+                        continue
+                    for lb in row.get("labels_to_add") or []:
+                        s = str(lb)
+                        if not s or not s.replace("_", "").isalnum():
+                            logger.warning(
+                                "apply_phase2_tier1: skipping invalid label %r for %s",
+                                lb,
+                                nid,
+                            )
+                            continue
+                        by_label.setdefault(s, []).append(nid)
+
+                    props = row.get("properties") or {}
+                    clean = {k: v for k, v in props.items() if v is not None}
+                    if clean:
+                        prop_rows.append({"id": nid, "props": clean})
+
+                for label, ids in by_label.items():
+                    self._add_labels_batch(session, label, ids, codebase_id)
+
+                if prop_rows:
+                    session.run(
+                        """
+                        UNWIND $rows AS row
+                        MATCH (n:CodeNode {codebase_id: $codebase_id, id: row.id})
+                        SET n += row.props
+                        """,
+                        rows=prop_rows,
+                        codebase_id=codebase_id,
+                    )
+                    logger.info(
+                        "apply_phase2_tier1: set properties on %d nodes",
+                        len(prop_rows),
+                    )
+
+            logger.info("apply_phase2_tier1 completed: codebase_id=%s", codebase_id)
+
+        except Exception as e:
+            logger.exception("apply_phase2_tier1 failed: %s", e)
+            raise
+
+    def _add_labels_batch(
+        self,
+        session: Any,
+        label: str,
+        node_ids: list[str],
+        codebase_id: str,
+    ) -> None:
+        """SET static label token on matching CodeNodes (one label per batch)."""
+        if not node_ids:
+            return
+        query = f"""
+            UNWIND $ids AS nid
+            MATCH (n:CodeNode {{codebase_id: $codebase_id, id: nid}})
+            SET n:{label}
+            """
+        session.run(query, ids=node_ids, codebase_id=codebase_id)
+        logger.info(
+            "apply_phase2_tier1: added label %s to %d nodes",
+            label,
+            len(node_ids),
+        )
+
     def delete_by_codebase(self, codebase_id: str) -> int:
         """
         Delete all nodes and relationships for a codebase.

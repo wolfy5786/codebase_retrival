@@ -1,48 +1,97 @@
 # Relationships (Edges)
 
-1. CALLS
-2. SETS
-3. GETS
-4. CONTAINS
-5. INHERITS
-6. IMPLEMENTS
-7. BELONGS_TO
-8. OVERRIDES
-9. EXCEPTION_FLOW      for future 
-10. INSTANTIATES
+All relationship constraints (valid From/To label pairs) are enforced at the application level.
 
+---
 
+## Phase 1 Relationship
 
-Relationship are Label specific enforced at Application level
-Relatinship        From                          To
-CALLS              CodeUnit / Function,         CodeUnit/ Function
-                   Module / File, Network_in,   Module / File, Network_out
-                   Lambda,                      Database
-                   Instantiator / Constructor
+Phase 1 creates only one relationship type. It is built directly from the
+documentSymbol hierarchy during node creation.
 
-CONTAINS           Module / File,               CodeUnit / Function,
-                   Class / Container            InnerClass (only from Class)
-                   Interface                    Object, StaticMember
+| #  | Relationship | From                          | To                                                                  | Properties     |
+|----|-------------|-------------------------------|---------------------------------------------------------------------|----------------|
+| 1  | CONTAINS    | Module/File, Class, Interface | CodeUnit/Function, InnerClass (only from Class), Object, Attribute  | order (int)    |
 
-INHERITS           Class, Interface             Class / Interface
+---
 
-IMPLEMENTS         Interface                    Class
+## Phase 2 Relationships (added to existing nodes; no new nodes created)
 
-BELONGS_TO         Object                       Class
+### Tier 1 Relationships -- Identified by source regex (no LSP, no graph dependencies)
 
-OVERRIDES          Function                     Function
+| #  | Relationship | From                  | To                    | How Identified                          | Languages          | Properties                                |
+|----|--------------|-----------------------|-----------------------|-----------------------------------------|--------------------|-------------------------------------------|
+| 2  | INHERITS     | Class, Interface      | Class, Interface      | Source regex (see patterns below)       | All                | is_abstract (bool), line (int)            |
+| 3  | IMPLEMENTS   | Class                 | Interface             | Source regex (see patterns below)       | Java, TS           | is_abstract (bool), line (int)            |
 
-INSTANTIATES       Constructor                  Class
+Tier 1 regex patterns per language:
 
-SETS              CodeUnit / Function,          StaticMember
-                  Module                
+INHERITS:
+  Java     -- `class\s+\w+\s+extends\s+(\w+)` and `interface\s+\w+\s+extends\s+([\w,\s]+)`
+  C++      -- `class\s+\w+\s*:\s*(public|protected|private)\s+(\w+)` (may have multiple bases)
+  Python   -- `class\s+\w+\s*\(([\w,\s]+)\)` (base classes in parentheses)
+  JS/TS    -- `class\s+\w+\s+extends\s+(\w+)`
 
-GETS              CodeUnit / function,          StaticMember
-                  Module
+IMPLEMENTS:
+  Java     -- `class\s+\w+.*implements\s+([\w,\s]+)`
+  TS       -- `class\s+\w+.*implements\s+([\w,\s]+)`
+  C++      -- N/A (use INHERITS for pure virtual base classes)
+  Python   -- N/A (protocols are informational, not enforced)
 
-SPAWNS            Forks Threads / Process      Thread, Function
-                  (spawner)                    (thread/process entry point)
+### Tier 3 Relationships -- Identified using LSP calls (independent of graph structure)
 
-   Note: SPAWNS connects the spawner (e.g. threading.Thread(target=foo)) to the
-   entry point (foo). Forks_Threads_Process is the call site; Thread/Function is the target.
-                   
+| #  | Relationship | From                                                         | To                              | LSP Method                                   | Languages | Properties                                           |
+|----|-------------|--------------------------------------------------------------|---------------------------------|----------------------------------------------|-----------|------------------------------------------------------|
+| 4  | CALLS       | CodeUnit/Function, Module/File, Lambda, Instantiator/Constructor | CodeUnit/Function, Module/File, Database | prepareCallHierarchy + outgoingCalls   | All       | direct (bool), static_resolution (bool), line (int)  |
+| 5  | SETS        | CodeUnit/Function, Module                                     | Attribute                       | documentHighlight (kind=3, write) on Attribute | All       | member_name (str), line (int)                        |
+| 6  | GETS        | CodeUnit/Function, Module                                     | Attribute                       | documentHighlight (kind=2, read) on Attribute  | All       | member_name (str), line (int)                        |
+
+### Tier 2 Relationships -- Require existing graph structure (DAG-ordered, sequential)
+
+| #  | Relationship | From                     | To               | Depends On                                         | Neo4j Read Query                                                                            | Languages | Properties                  |
+|----|-------------|--------------------------|------------------|----------------------------------------------------|---------------------------------------------------------------------------------------------|-----------|---------------------------  |
+| 7  | INSTANTIATES | Constructor             | Class            | Constructor label (T1) + CONTAINS (Phase 1)         | MATCH (parent:Class)-[:CONTAINS]->(ctor:Constructor) WHERE ctor.codebase_id=$cid            | All       | line (int)                  |
+| 8  | OVERRIDES    | Function/Method         | Function/Method  | INHERITS (T1) + Method/Function labels (T1) + InnerClass (T2a) | MATCH (child:Class)-[:INHERITS]->(parent)-[:CONTAINS]->(m:Method) WHERE child.codebase_id=$cid | All | line (int)             |
+| 9  | BELONGS_TO   | Object                  | Class            | Object label (T3) + Class label (T1)                | MATCH (obj:Object {codebase_id:$cid}) then resolve reference_type_detail to Class by name   | Java, C++, TS | namespace (str), is_primary (bool) |
+| 10 | SPAWNS       | Forks Threads / Process | Thread, Function | Forks Threads/Process label (T1) + Thread target resolution | MATCH (f:ForksThreadsProcess {codebase_id:$cid}) then resolve spawn target                  | All       | line (int), kind (str: "thread"/"process") |
+
+---
+
+## Tier 2 DAG -- Execution Order
+
+Tier 2 relationships and labels are processed sequentially in dependency order.
+Each step reads from Neo4j, computes edges/labels, and writes back before the next step.
+
+Step 2a (independent of each other; depends only on Tier 1 + Phase 1):
+  - InnerClass label: MATCH (parent:Class)-[:CONTAINS]->(child:Class) => add InnerClass to child
+  - INSTANTIATES:     MATCH (parent:Class)-[:CONTAINS]->(ctor:Constructor) => edge ctor->parent
+
+Step 2b (depends on Step 2a being written):
+  - OVERRIDES:  Query INHERITS edges + Method/Function labels; match signatures across parent hierarchy
+  - BELONGS_TO: Query Object nodes + reference_type_detail => resolve to target Class by name
+
+Step 2c (depends on Step 2b being written):
+  - External:  For each node, check definition_uri; if path is outside codebase root, add External label, remove Internal
+  - SPAWNS:    Query Forks Threads/Process nodes, resolve thread/process target entry point
+
+---
+
+## Future Relationships (not yet implemented)
+
+| #  | Relationship    | Notes                                      |
+|----|-----------------|--------------------------------------------|
+| 11 | EXCEPTION_FLOW  | try -> catch/except flow; future work      |
+| 12 | DATA_FLOW       | Variable data flow edges; planned for later |
+
+---
+
+## Common Relationship Properties
+
+All relationships may carry these common attributes:
+
+| Property       | Type | Description                                              |
+|----------------|------|----------------------------------------------------------|
+| source_level   | int  | Level of the source node (redundant but query-convenient) |
+| target_level   | int  | Level of the target node                                  |
+| line           | int  | Primary line number of the relationship (e.g. call site)  |
+| column         | int  | Column for precise location (optional)                    |

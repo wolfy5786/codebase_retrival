@@ -23,7 +23,8 @@ This directory contains Cypher migration scripts for the CodeGraph Neo4j databas
    - Password: (value of `NEO4J_PASSWORD`)
 
 4. Copy and paste the contents of each migration file in order:
-   - `001_constraints.cypher` - Constraints and indexes for Phase 1
+   - `001_constraints.cypher` — constraints and indexes for Phase 1
+   - `002_vector_index.cypher` — vector index on `CodeNode.embedding` (after nodes use `:CodeNode` and embeddings are written)
 
 5. Execute the Cypher statements
 
@@ -47,7 +48,7 @@ For production deployments, use a tool like:
 | File | Description | Status |
 |------|-------------|--------|
 | `001_constraints.cypher` | Phase 1: Node constraints, existence checks, basic indexes | ✅ Ready |
-| `002_vector_index.cypher` | Phase 2: Vector index for embeddings | 🔜 Future |
+| `002_vector_index.cypher` | Vector index on `CodeNode.embedding` (cosine, 1536 dims; `text-embedding-3-small`) | ✅ Ready |
 
 ## Test Graph Stats (Verify Ingestion per Codebase)
 
@@ -77,13 +78,14 @@ SHOW CONSTRAINTS;
 SHOW INDEXES;
 ```
 
-Expected output after Phase 1:
+Expected output after Phase 1 + vector migration:
 - Constraint: `node_id_unique` on `:CodeNode(id)`
 - Constraint: `node_codebase_id_exists` on `:CodeNode(codebase_id)`
 - Index: `node_codebase_id_idx` on `:CodeNode(codebase_id)`
 - Index: `node_path_idx` on `:CodeNode(path)`
 - Index: `node_codebase_language_idx` on `:CodeNode(codebase_id, language)`
 - Index: `node_level_idx` on `:CodeNode(level)`
+- Vector index: `node_embedding_idx` on `:CodeNode(embedding)` (after `002_vector_index.cypher`)
 
 ## Rollback
 
@@ -99,6 +101,7 @@ DROP INDEX node_codebase_id_idx IF EXISTS;
 DROP INDEX node_path_idx IF EXISTS;
 DROP INDEX node_codebase_language_idx IF EXISTS;
 DROP INDEX node_level_idx IF EXISTS;
+DROP INDEX node_embedding_idx IF EXISTS;
 
 // Delete all data (danger!)
 MATCH (n) DETACH DELETE n;

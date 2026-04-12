@@ -1,5 +1,5 @@
 """
-Ingestion worker — consumes Redis jobs, runs two-phase pipeline.
+Ingestion worker — consumes Redis jobs, runs Phase 1 graph indexing then Storage/manifest.
 All DB changes happen only at the end. On any prep failure: cancel, do not modify DB.
 """
 import asyncio
@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from collections import defaultdict
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -25,7 +26,8 @@ from .scanner import scan_directory
 from .hasher import compute_file_hash
 from .lsp.client import LspClient
 from .lsp.servers.java import start_jdtls, get_initialization_options
-from .crawl.phase1 import crawl_phase1
+from .crawl.phase1 import classify_file, crawl_phase1
+from .crawl.phase2 import build_file_contents_from_batch, crawl_phase2_tier1
 from .graph_writer import GraphWriter
 
 logger = logging.getLogger(__name__)
@@ -112,36 +114,52 @@ async def process_job(payload: dict) -> None:
             # Empty is OK — maybe ZIP had no eligible files
             batch = []
         
-        # --- Phase 1: LSP analysis for Java files ---
-        # Determine workspace root (extracted ZIP root)
+        # --- Phase 1: structural nodes + CONTAINS (classify paths, optional Java LSP) ---
         tmpdir = Path(extract_path)
         top_level = list(tmpdir.iterdir())
         if len(top_level) == 1 and top_level[0].is_dir():
             workspace_root = str(top_level[0])
         else:
             workspace_root = str(tmpdir)
-        
-        java_files = [
-            str((Path(workspace_root) / rel_path).resolve())
-            for rel_path, _, _ in batch
-            if rel_path.endswith(".java")
-        ]
-        
-        if java_files:
-            logger.info("process_job: found %d Java files, running Phase 1", len(java_files))
-            try:
-                nodes, contains_edges = _run_phase1_java(
-                    workspace_root,
-                    java_files,
-                    codebase_id,
+
+        classified_files: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for rel_path, _, _ in batch:
+            abs_path = str((Path(workspace_root) / rel_path).resolve())
+            ft = classify_file(rel_path)
+            if ft is None:
+                logger.warning(
+                    "process_job: path in batch but not classified, skipping graph: %s",
+                    rel_path,
                 )
-                
-                # Write to Neo4j
+                continue
+            classified_files[ft].append((abs_path, rel_path))
+        classified_files = {k: v for k, v in classified_files.items() if v}
+
+        total_classified = sum(len(v) for v in classified_files.values())
+        if total_classified:
+            logger.info(
+                "process_job: classified %d file(s) for Phase 1: %s",
+                total_classified,
+                {k: len(v) for k, v in classified_files.items()},
+            )
+            try:
+                nodes, contains_edges = _run_phase1(
+                    classified_files, codebase_id, workspace_root
+                )
+
                 logger.info("process_job: writing %d nodes to Neo4j", len(nodes))
                 graph_writer = GraphWriter()
                 try:
                     graph_writer.write_phase1(nodes, contains_edges, codebase_id)
-                    # Verify graph written: query counts for this codebase
+                    file_map = build_file_contents_from_batch(workspace_root, batch)
+                    tier1_updates = crawl_phase2_tier1(
+                        nodes,
+                        contains_edges,
+                        file_map,
+                        workspace_root,
+                        codebase_id,
+                    )
+                    graph_writer.apply_phase2_tier1(tier1_updates, codebase_id)
                     stats = graph_writer.get_graph_stats_for_codebase(codebase_id)
                     logger.info(
                         "process_job: graph stats for codebase_id=%s: nodes=%d relationships=%d",
@@ -151,13 +169,13 @@ async def process_job(payload: dict) -> None:
                     )
                 finally:
                     graph_writer.close()
-                
-                logger.info("process_job: Phase 1 completed successfully")
+
+                logger.info("process_job: Phase 1 + Tier 1 completed successfully")
             except Exception as e:
                 logger.exception("process_job: Phase 1 failed: %s", e)
-                raise  # Cancel job on Phase 1 failure
+                raise
         else:
-            logger.info("process_job: no Java files found, skipping Phase 1")
+            logger.info("process_job: no classifiable files, skipping Phase 1")
 
         # --- Commit phase (only after preparation succeeds — order matters) ---
         supabase = _get_supabase()
@@ -199,57 +217,60 @@ async def process_job(payload: dict) -> None:
     logger.info("process_job ended job_id=%s", job_id)
 
 
-def _run_phase1_java(
-    workspace_root: str,
-    java_files: list[str],
+def _run_phase1(
+    classified_files: dict[str, list[tuple[str, str]]],
     codebase_id: str,
+    workspace_root: str,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Run Phase 1 crawl for Java files using jdtls.
-    
-    Args:
-        workspace_root: Root directory of the workspace
-        java_files: List of absolute paths to Java files
-        codebase_id: Codebase UUID
-        
-    Returns:
-        (nodes, contains_edges) tuple
+    Run Phase 1 crawl: whole-file nodes, optional Java LSP for ``File`` entries.
+
+    Starts jdtls only when at least one ``.java`` file is present under ``File``.
+    Otherwise passes ``client=None`` (placeholders / non-Java whole-file nodes only).
     """
-    logger.info("_run_phase1_java started: files=%d", len(java_files))
-    
-    # Start jdtls
+    file_entries = classified_files.get("File", [])
+    needs_java_lsp = any(
+        rel.lower().endswith(".java") for _, rel in file_entries
+    )
+
+    if not needs_java_lsp:
+        logger.info("_run_phase1: no Java sources; Phase 1 without LSP")
+        return crawl_phase1(
+            None,
+            classified_files,
+            codebase_id,
+            default_lsp_language="java",
+        )
+
+    logger.info("_run_phase1: starting Java LSP for documentSymbol")
     process = start_jdtls(workspace_root)
-    client = None
-    
+    client: LspClient | None = None
+
     try:
-        # Initialize LSP client
         client = LspClient(process, workspace_root)
         init_options = get_initialization_options(workspace_root)
         client.initialize(init_options)
-        
-        # Run Phase 1 crawl
+
         nodes, contains_edges = crawl_phase1(
             client,
-            java_files,
-            "java",
+            classified_files,
             codebase_id,
+            default_lsp_language="java",
         )
-        
         logger.info(
-            "_run_phase1_java completed: nodes=%d contains_edges=%d",
+            "_run_phase1 done: nodes=%d contains_edges=%d",
             len(nodes),
             len(contains_edges),
         )
-        
         return nodes, contains_edges
-        
+
     except Exception as e:
-        logger.exception("_run_phase1_java failed: %s", e)
+        logger.exception("_run_phase1 failed: %s", e)
         raise
     finally:
         if client:
             client.close()
-        logger.info("_run_phase1_java: LSP client closed")
+        logger.info("_run_phase1: LSP client closed")
 
 
 def _download_extract_scan_hash(
