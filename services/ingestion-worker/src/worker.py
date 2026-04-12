@@ -152,14 +152,21 @@ async def process_job(payload: dict) -> None:
                 try:
                     graph_writer.write_phase1(nodes, contains_edges, codebase_id)
                     file_map = build_file_contents_from_batch(workspace_root, batch)
-                    tier1_updates = crawl_phase2_tier1(
+                    tier1_result = crawl_phase2_tier1(
                         nodes,
                         contains_edges,
                         file_map,
                         workspace_root,
                         codebase_id,
                     )
-                    graph_writer.apply_phase2_tier1(tier1_updates, codebase_id)
+                    graph_writer.apply_phase2_tier1(
+                        tier1_result["updates"],
+                        codebase_id,
+                    )
+                    graph_writer.apply_phase2_tier1_relationships(
+                        tier1_result.get("tier1_rel_candidates") or [],
+                        codebase_id,
+                    )
                     stats = graph_writer.get_graph_stats_for_codebase(codebase_id)
                     logger.info(
                         "process_job: graph stats for codebase_id=%s: nodes=%d relationships=%d",

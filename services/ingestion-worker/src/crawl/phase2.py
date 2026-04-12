@@ -1,7 +1,8 @@
 """
 Phase 2 Tier 1: semantic labels and Tier-1 properties on existing Phase 1 nodes.
 
-Does not create nodes. Does not write relationships (Tier 2 / Tier 3 handle edges).
+Does not create new symbol nodes. Emits Tier 1 relationship *candidates*
+(``INHERITS``, ``IMPLEMENTS`` for Java) resolved and written by ``GraphWriter``.
 
 Uses the same language mappers as the extractor layer (``get_mapper``) plus
 language-specific regex rules for additive labels (e.g. Testing, Database).
@@ -342,6 +343,147 @@ def _extract_tier1_properties(
     return {}
 
 
+# ── Java: Tier 1 INHERITS / IMPLEMENTS (declaration regex) ──────────────────
+
+
+def _strip_java_generics(s: str) -> str:
+    """Remove top-level ``<...>`` segments for simple-name extraction."""
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "<":
+            depth = 1
+            i += 1
+            while i < len(s) and depth:
+                if s[i] == "<":
+                    depth += 1
+                elif s[i] == ">":
+                    depth -= 1
+                i += 1
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+def _java_simple_type_name(raw: str) -> str:
+    """Map a type reference string to the simple name used for graph ``name`` lookup."""
+    if not raw:
+        return ""
+    s = raw.strip()
+    while s.startswith("@"):
+        depth = 0
+        j = 0
+        while j < len(s):
+            if s[j] == "(":
+                depth += 1
+            elif s[j] == ")" and depth > 0:
+                depth -= 1
+            elif s[j] in " \t" and depth == 0 and j > 0:
+                break
+            j += 1
+        s = s[j:].strip()
+    s = _strip_java_generics(s)
+    s = s.strip()
+    if not s:
+        return ""
+    return s.split(".")[-1].strip()
+
+
+def _split_java_type_list(s: str) -> list[str]:
+    """Split a comma-separated type list respecting angle-bracket nesting."""
+    s = s.strip().rstrip(",")
+    if not s:
+        return []
+    parts: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in s:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur).strip())
+    return [p for p in parts if p]
+
+
+def _extract_java_type_header(lines: list[str], start_line: int, max_lines: int = 40) -> str:
+    """
+    Collect class / interface / enum header lines from ``start_line`` (1-based)
+    through the line that contains ``{``.
+    """
+    if not lines or start_line < 1:
+        return ""
+    i = start_line - 1
+    end = min(len(lines), start_line - 1 + max_lines)
+    parts: list[str] = []
+    while i < end:
+        parts.append(lines[i])
+        if "{" in lines[i]:
+            break
+        i += 1
+    return "\n".join(parts)
+
+
+def _java_tier1_rel_candidates(kind: int, header: str) -> list[dict[str, str]]:
+    """
+    Parse Java declaration header for ``extends`` / ``implements``.
+
+    Returns dicts with ``rel_type`` in ``INHERITS``, ``IMPLEMENTS`` and ``target_name``
+    (simple name for resolution against ``CodeNode.name``).
+    """
+    header_one = " ".join(header.split())
+    if not header_one:
+        return []
+
+    is_enum = bool(re.search(r"\benum\s+\w+", header_one))
+    is_interface = kind == 11
+
+    out: list[dict[str, str]] = []
+
+    if kind in (5, 10) and not is_interface:
+        m_imp = re.search(r"\bimplements\s+(.+?)(?=\s*\{)", header_one)
+        if m_imp:
+            for t in _split_java_type_list(m_imp.group(1)):
+                sn = _java_simple_type_name(t)
+                if sn:
+                    out.append({"rel_type": "IMPLEMENTS", "target_name": sn})
+
+    if is_enum:
+        return out
+
+    if is_interface:
+        m_ext = re.search(
+            r"\bextends\s+(.+?)(?=\s*\{)",
+            header_one,
+        )
+        if m_ext:
+            for t in _split_java_type_list(m_ext.group(1)):
+                sn = _java_simple_type_name(t)
+                if sn:
+                    out.append({"rel_type": "INHERITS", "target_name": sn})
+        return out
+
+    # class (kind 5): extends + implements (implements already added above)
+    if kind == 5:
+        m_ext = re.search(
+            r"\bextends\s+(.+?)(?=\s+implements\s+|\s*\{)",
+            header_one,
+        )
+        if m_ext:
+            clause = m_ext.group(1).strip()
+            sn = _java_simple_type_name(clause)
+            if sn:
+                out.append({"rel_type": "INHERITS", "target_name": sn})
+
+    return out
+
+
 # ── public API ───────────────────────────────────────────────────────────────
 
 
@@ -351,12 +493,17 @@ def crawl_phase2_tier1(
     file_contents: dict[str, str],
     workspace_root: str,
     codebase_id: str,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """
-    Compute Tier 1 label additions and properties for each symbol node.
+    Compute Tier 1 label additions, properties, and Java Tier 1 relationship candidates.
 
-    Returns a list of dicts: ``{"id", "labels_to_add": [...], "properties": {...}}``.
-    Nodes without ``kind`` get only ``level`` if applicable.
+    Returns a dict:
+
+    - ``updates``: list of ``{"id", "labels_to_add", "properties"}``
+    - ``tier1_rel_candidates``: list of ``{"from_id", "target_name", "rel_type"}``
+      for ``GraphWriter.apply_phase2_tier1_relationships`` (Java ``INHERITS`` / ``IMPLEMENTS``).
+
+    Nodes without ``kind`` get only ``level`` where applicable.
     """
     _ = codebase_id
     id_to_node = {n["id"]: n for n in nodes}
@@ -365,6 +512,7 @@ def crawl_phase2_tier1(
 
     resolved_semantic: dict[str, list[str]] = {}
     updates: list[dict[str, Any]] = []
+    tier1_rel_candidates: list[dict[str, str]] = []
 
     for nid in order:
         node = id_to_node[nid]
@@ -419,12 +567,26 @@ def crawl_phase2_tier1(
             "properties": props,
         })
 
+        if lang == "java" and kind in (5, 10, 11) and lines:
+            start_ln = int(node.get("start_line") or 1)
+            header = _extract_java_type_header(lines, start_ln)
+            for c in _java_tier1_rel_candidates(kind, header):
+                tier1_rel_candidates.append({
+                    "from_id": nid,
+                    "target_name": c["target_name"],
+                    "rel_type": c["rel_type"],
+                })
+
     logger.info(
-        "crawl_phase2_tier1: nodes=%d updates=%d",
+        "crawl_phase2_tier1: nodes=%d updates=%d tier1_rel_candidates=%d",
         len(nodes),
         len(updates),
+        len(tier1_rel_candidates),
     )
-    return updates
+    return {
+        "updates": updates,
+        "tier1_rel_candidates": tier1_rel_candidates,
+    }
 
 
 __all__ = [
@@ -432,4 +594,8 @@ __all__ = [
     "file_key_for_node",
     "build_file_contents_from_batch",
     "crawl_phase2_tier1",
+    "_java_tier1_rel_candidates",
+    "_extract_java_type_header",
+    "_java_simple_type_name",
+    "_split_java_type_list",
 ]

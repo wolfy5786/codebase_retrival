@@ -2,6 +2,10 @@
 
 > **Source of truth:** The main project README (`README.md`) is the authoritative source for system design. This document provides detailed retrieval-system documentation and should be kept in sync with it.
 
+### Implementation status (languages)
+
+**Current implementation:** The ingestion pipeline and Phase 1/2 crawlers are implemented for **Java** only (e.g. jdtls). The design below describes the full multi-language architecture; support for Python, Go, JavaScript, TypeScript, C/C++, Rust, and others will be added in later releases.
+
 ### Overview
 
 This project is a **semantic retrieval system for codebases** that combines:
@@ -19,7 +23,7 @@ The primary goals are:
 Given a folder path, the system:
 
 1. Walks the codebase, skipping binary, auto-generated, and non-textual files (see [File Filtering](#file-filtering)).
-2. Uses **LSP** to analyze supported source files (Java, Python, Go, JS, TS, C/C++, Rust) and identifies semantic **nodes** and **relationships**.
+2. Uses **LSP** to analyze source files. **Shipped today: Java only**; the same pipeline is intended to cover Python, Go, JS, TS, C/C++, Rust, and others as they are enabled. LSP analysis identifies semantic **nodes** and **relationships**.
 3. Embeds each node using OpenAI (code + comments + docstrings).
 4. Stores the graph and embeddings in **Neo4j**.
 5. Exposes a node-based query API; queries are executed via MCP to Neo4j.
@@ -245,17 +249,9 @@ This hierarchy also supports **token-efficient retrieval**, because high-level q
 
 #### Supported Languages
 
-The ingestion pipeline supports the following languages via **LSP (Language Server Protocol)**:
+**Implemented today:** **Java** via **LSP** (e.g. jdtls).
 
-- **Java**
-- **Python**
-- **Go**
-- **JavaScript**
-- **TypeScript**
-- **C / C++**
-- **Rust**
-
-Each language uses its corresponding LSP server (e.g., jdtls for Java, pyright/pylsp for Python, gopls for Go, typescript-language-server for JS/TS, clangd for C/C++, rust-analyzer for Rust).
+**Planned:** Python, Go, JavaScript, TypeScript, C/C++, Rust, each with its corresponding LSP server (e.g. pyright/pylsp, gopls, typescript-language-server, clangd, rust-analyzer), will be added in later releases.
 
 #### LSP API Surface
 
@@ -513,7 +509,7 @@ High-level components and their interactions:
     - Hashes each file; compares against Supabase `file_manifest` to skip unchanged files.
     - Uploads accepted source files to **Supabase Storage** (`codebases/{id}/files/{path}`); updates manifest.
   - `LSP Client & Server Manager`
-    - Manages LSP server processes per language (Java, Python, Go, JS, TS, C/C++, Rust).
+    - Manages LSP server processes per language (**Java in current implementation**; additional languages planned).
     - Opens documents, sends LSP requests, receives symbol/call/definition/hover/highlight responses.
   - `Phase 1 Crawler` (nodes + CONTAINS only)
     - Multi-threaded: for each file, calls `textDocument/documentSymbol`; builds nodes with `CodeNode` label and structural properties; builds `CONTAINS` edges.
@@ -579,13 +575,7 @@ Textual flow:
 
 **Parsing / Analysis:**
 
-- **LSP (Language Server Protocol)** -- each supported language uses its LSP server:
-  - **Java** -- jdtls (Eclipse JDT Language Server)
-  - **Python** -- pyright, pylsp, or pyright
-  - **Go** -- gopls
-  - **JavaScript / TypeScript** -- typescript-language-server (or tsserver)
-  - **C / C++** -- clangd
-  - **Rust** -- rust-analyzer
+- **LSP (Language Server Protocol)** -- **current implementation: Java** with jdtls (Eclipse JDT Language Server). Planned additions: Python (pyright/pylsp), Go (gopls), JavaScript/TypeScript (typescript-language-server or tsserver), C/C++ (clangd), Rust (rust-analyzer).
 
 **API & Services:**
 
@@ -604,5 +594,5 @@ Textual flow:
 ### Future Enhancements
 
 - Add **DATA_FLOW** and **EXCEPTION_FLOW** edges for deeper debugging and analysis.
-- Expand language support and better handle language-specific features (mixins, traits, partials).
+- Add languages beyond the current Java-only pipeline and better handle language-specific features (mixins, traits, partials).
 - Improve query planning logic for more sophisticated combinations of graph constraints and semantic similarity.

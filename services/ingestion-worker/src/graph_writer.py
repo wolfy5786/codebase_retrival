@@ -15,7 +15,8 @@ class GraphWriter:
     """
     Writes nodes and relationships to Neo4j.
     Phase 1: structural nodes (``kind``, ``detail``, etc.) + CONTAINS.
-    Phase 2 Tier 1: ``apply_phase2_tier1`` adds semantic labels and Tier-1 properties.
+    Phase 2 Tier 1: ``apply_phase2_tier1`` adds semantic labels and Tier-1 properties;
+    ``apply_phase2_tier1_relationships`` merges Java ``INHERITS`` / ``IMPLEMENTS`` edges.
     """
     
     def __init__(self):
@@ -269,6 +270,142 @@ class GraphWriter:
         except Exception as e:
             logger.exception("apply_phase2_tier1 failed: %s", e)
             raise
+
+    def apply_phase2_tier1_relationships(
+        self,
+        candidates: list[dict],
+        codebase_id: str,
+    ) -> None:
+        """
+        Merge Tier 1 ``INHERITS`` / ``IMPLEMENTS`` edges from crawl candidates.
+
+        Each candidate has ``from_id``, ``target_name`` (``CodeNode.name``), and
+        ``rel_type`` (``INHERITS`` or ``IMPLEMENTS``). Targets are resolved to
+        ``CodeNode`` rows with ``kind`` in ``[5, 11]`` (class / interface).
+        Multiple matches for the same name emit one edge per target (ambiguous-name rule).
+        """
+        if not candidates:
+            logger.info(
+                "apply_phase2_tier1_relationships: no candidates (codebase_id=%s)",
+                codebase_id,
+            )
+            return
+
+        logger.info(
+            "apply_phase2_tier1_relationships started: candidates=%d codebase_id=%s",
+            len(candidates),
+            codebase_id,
+        )
+
+        try:
+            with self.driver.session() as session:
+                names = sorted(
+                    {str(c["target_name"]) for c in candidates if c.get("target_name")}
+                )
+                name_to_ids: dict[str, list[str]] = {}
+                if names:
+                    res = session.run(
+                        """
+                        UNWIND $names AS name
+                        MATCH (b:CodeNode {codebase_id: $codebase_id, name: name})
+                        WHERE b.kind IN [5, 11]
+                        RETURN name, collect(b.id) AS ids
+                        """,
+                        names=names,
+                        codebase_id=codebase_id,
+                    )
+                    for rec in res:
+                        name_to_ids[rec["name"]] = list(rec["ids"] or [])
+
+                inherits_pairs: list[dict[str, str]] = []
+                implements_pairs: list[dict[str, str]] = []
+                seen_inherits: set[tuple[str, str]] = set()
+                seen_implements: set[tuple[str, str]] = set()
+
+                for c in candidates:
+                    fid = c.get("from_id")
+                    tname = c.get("target_name")
+                    rtype = (c.get("rel_type") or "").upper()
+                    if not fid or not tname or rtype not in ("INHERITS", "IMPLEMENTS"):
+                        continue
+                    ids = name_to_ids.get(str(tname), [])
+                    if not ids:
+                        logger.debug(
+                            "Tier1 rel: no target for name=%r from_id=%s type=%s",
+                            tname,
+                            fid,
+                            rtype,
+                        )
+                        continue
+                    if len(ids) > 1:
+                        logger.warning(
+                            "Tier1 rel: ambiguous target name=%r -> %d matches from_id=%s type=%s",
+                            tname,
+                            len(ids),
+                            fid,
+                            rtype,
+                        )
+                    for tid in ids:
+                        if tid == fid:
+                            continue
+                        row = {"from_id": fid, "to_id": tid}
+                        if rtype == "INHERITS":
+                            key = (fid, tid)
+                            if key in seen_inherits:
+                                continue
+                            seen_inherits.add(key)
+                            inherits_pairs.append(row)
+                        else:
+                            key = (fid, tid)
+                            if key in seen_implements:
+                                continue
+                            seen_implements.add(key)
+                            implements_pairs.append(row)
+
+                self._merge_tier1_edges_batch(
+                    session, inherits_pairs, codebase_id, "INHERITS"
+                )
+                self._merge_tier1_edges_batch(
+                    session, implements_pairs, codebase_id, "IMPLEMENTS"
+                )
+
+            logger.info(
+                "apply_phase2_tier1_relationships completed: codebase_id=%s",
+                codebase_id,
+            )
+
+        except Exception as e:
+            logger.exception("apply_phase2_tier1_relationships failed: %s", e)
+            raise
+
+    def _merge_tier1_edges_batch(
+        self,
+        session: Any,
+        pairs: list[dict[str, str]],
+        codebase_id: str,
+        rel_type: str,
+    ) -> None:
+        if not pairs:
+            logger.debug("Tier1: no %s edges to merge", rel_type)
+            return
+        if rel_type == "INHERITS":
+            query = """
+            UNWIND $pairs AS p
+            MATCH (a:CodeNode {codebase_id: $codebase_id, id: p.from_id})
+            MATCH (b:CodeNode {codebase_id: $codebase_id, id: p.to_id})
+            MERGE (a)-[:INHERITS]->(b)
+            """
+        elif rel_type == "IMPLEMENTS":
+            query = """
+            UNWIND $pairs AS p
+            MATCH (a:CodeNode {codebase_id: $codebase_id, id: p.from_id})
+            MATCH (b:CodeNode {codebase_id: $codebase_id, id: p.to_id})
+            MERGE (a)-[:IMPLEMENTS]->(b)
+            """
+        else:
+            raise ValueError(f"unsupported rel_type: {rel_type!r}")
+        session.run(query, pairs=pairs, codebase_id=codebase_id)
+        logger.info("apply_phase2_tier1_relationships: merged %d %s edge(s)", len(pairs), rel_type)
 
     def _add_labels_batch(
         self,

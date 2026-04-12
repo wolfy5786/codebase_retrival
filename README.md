@@ -4,6 +4,8 @@
 
 CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds every semantic code unit (functions, classes, modules, lambdas, try/except blocks, etc.), and lets developers query their codebase in plain English. Results are ranked, deduplicated, and returned with exact file paths and line numbers — giving developers the top 5 most relevant code locations for any question.
 
+**Language support (current implementation):** The indexer and LSP-driven graph pipeline are wired for **Java** only. Support for Python, JavaScript, TypeScript, and other languages will be added in a later release.
+
 ---
 
 ## Table of Contents
@@ -29,7 +31,7 @@ CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds ever
 ## Features
 
 - **Multi-interface ingestion** — upload a ZIP archive, paste a GitHub URL, use the VS Code extension, or call the MCP server.
-- **Full repository indexing** — parses Python, Java, JavaScript, and TypeScript via LSP into a Neo4j knowledge graph with vector embeddings on every node.
+- **Full repository indexing** — parses **Java** via LSP into a Neo4j knowledge graph with vector embeddings on every node (additional languages planned).
 - **Semantic code search** — natural-language queries are passed to an LLM, which generates Neo4j queries and chooses between graph-only and embedding-with-graph strategies based on the question.
 - **Two retrieval modes** — *context only*: queries execute via MCP to Neo4j and results are returned directly; *context with explanation*: results are retrieved via MCP, then an LLM writes an explanation before returning to the user.
 - **Multi-query reasoning (explanation mode)** — when explanation is required, the LLM parses the question(s) in the prompt and may run one or more queries until satisfied with the retrieved context before generating the answer.
@@ -83,7 +85,7 @@ CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds ever
 
 ### Indexing Flow
 
-Graph construction uses **LSP (Language Server Protocol)** for each supported language. The input folder is crawled in two steps.
+Graph construction uses **LSP (Language Server Protocol)**. **Current implementation: Java only** (other languages planned). The input folder is crawled in two steps.
 
 ```
 Repo Input (ZIP / GitHub URL / local path)
@@ -188,7 +190,7 @@ LLM Orchestrator  (GPT family)
 | Layer               | Technology                               |
 | ------------------- | ---------------------------------------- |
 | Backend API         | Python 3.12, FastAPI                     |
-| Indexing pipeline   | Python, LSP (per-language)               |
+| Indexing pipeline   | Python, LSP (**Java** in current build; more languages later) |
 | Graph database      | Neo4j (vector indexes)                   |
 | Database & Auth     | Supabase (hosted PostgreSQL, Auth/GoTrue, Row Level Security) |
 | Cache / job queue   | Redis 7                                  |
