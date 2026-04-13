@@ -117,27 +117,29 @@ class JavaTier3Strategy:
                     if not stored_path:
                         continue
 
-                    target_ids = ctx.graph_writer.find_code_node_ids_covering_line(
+                    # Resolve callee at LSP's target line to an innermost *callable* (method /
+                    # constructor / function). Do not use every node covering the line — that
+                    # includes Class (5) for `new Foo()` when the server points at the type.
+                    target_id = ctx.graph_writer.find_enclosing_callable_id(
                         ctx.codebase_id, stored_path, line_1
                     )
-                    for target_id in target_ids:
-                        if target_id == nid:
-                            continue
-                        from_ranges = edge.get("fromRanges") or []
-                        line_prop = start_line
-                        col_prop = None
-                        if from_ranges:
-                            r0 = from_ranges[0].get("start", {})
-                            line_prop = int(r0.get("line", ctx.line0)) + 1
-                            col_prop = int(r0.get("character", 0))
-                        result.calls_edges.append(
-                            {
-                                "from_id": nid,
-                                "to_id": target_id,
-                                "line": line_prop,
-                                "column": col_prop,
-                            }
-                        )
+                    if not target_id or target_id == nid:
+                        continue
+                    from_ranges = edge.get("fromRanges") or []
+                    line_prop = start_line
+                    col_prop = None
+                    if from_ranges:
+                        r0 = from_ranges[0].get("start", {})
+                        line_prop = int(r0.get("line", ctx.line0)) + 1
+                        col_prop = int(r0.get("character", 0))
+                    result.calls_edges.append(
+                        {
+                            "from_id": nid,
+                            "to_id": target_id,
+                            "line": line_prop,
+                            "column": col_prop,
+                        }
+                    )
 
         if kind in _ATTRIBUTE_KINDS_FOR_HIGHLIGHT:
             try:

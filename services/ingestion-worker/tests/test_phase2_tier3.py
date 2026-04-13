@@ -123,8 +123,7 @@ class TestCrawlPhase2Tier3Mocked(unittest.TestCase):
         client.document_highlight.return_value = []
 
         gw = MagicMock()
-        gw.find_code_node_ids_covering_line.return_value = [tid]
-        gw.find_enclosing_callable_id.return_value = None
+        gw.find_enclosing_callable_id.return_value = tid
 
         from src.crawl.phase2 import file_key_for_node
 
