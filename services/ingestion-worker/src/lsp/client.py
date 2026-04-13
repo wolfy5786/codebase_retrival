@@ -122,6 +122,8 @@ class LspClient:
                     "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
                     "definition": {"dynamicRegistration": False, "linkSupport": True},
                     "typeDefinition": {"dynamicRegistration": False, "linkSupport": True},
+                    "documentHighlight": {"dynamicRegistration": False},
+                    "callHierarchy": {"dynamicRegistration": False},
                 },
             },
         }
@@ -176,6 +178,24 @@ class LspClient:
         }
         result = self._send_request("textDocument/hover", params)
         return result if result else None
+
+    def definition(self, file_path: str, line: int, character: int) -> dict | list | None:
+        """
+        Request textDocument/definition at 0-based line/character.
+        Returns Location, list of Location, list of LocationLink, or None.
+        """
+        params = {
+            "textDocument": {"uri": f"file://{file_path}"},
+            "position": {"line": line, "character": character},
+        }
+        try:
+            return self._send_request("textDocument/definition", params)
+        except Exception as e:
+            logger.debug(
+                "definition error at %s:%d:%d: %s",
+                file_path, line, character, e,
+            )
+            return None
 
     def type_definition(self, file_path: str, line: int, character: int) -> dict | list | None:
         """

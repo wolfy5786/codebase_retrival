@@ -108,6 +108,16 @@ def _normalize_locations(result: dict | list | None) -> list[dict]:
     return []
 
 
+def definition_result_to_uri(result: dict | list | None) -> str | None:
+    """First definition target URI from ``textDocument/definition`` result."""
+    locs = _normalize_locations(result)
+    if not locs:
+        return None
+    loc = locs[0]
+    uri = loc.get("uri") or loc.get("targetUri")
+    return str(uri) if uri else None
+
+
 def type_name_from_definition_location(loc: dict) -> str | None:
     """Use definition target file stem as simple type name (best-effort)."""
     uri = loc.get("uri") or loc.get("targetUri") or ""
@@ -119,6 +129,43 @@ def type_name_from_definition_location(loc: dict) -> str | None:
         path = path.lstrip("/")
     stem = Path(path).stem
     return stem or None
+
+
+def resolve_field_type_at_position(
+    client: "LspClient",
+    file_path: str,
+    line0: int,
+    char0: int,
+    field_name: str,
+    language: str,
+) -> str | None:
+    """
+    Same as ``resolve_field_type_when_detail_empty`` but with explicit LSP positions.
+    Used by Phase 2 Tier 3 for Object/Instance on class-scoped fields.
+    """
+    hover = None
+    try:
+        hover = client.hover(file_path, line0, char0)
+    except Exception as e:
+        logger.debug("hover failed for field %s: %s", field_name, e)
+
+    hover_txt = hover_result_to_text(hover)
+    parsed = parse_type_from_hover(hover_txt, field_name, language)
+    if parsed:
+        return parsed.strip()
+
+    try:
+        raw = client.type_definition(file_path, line0, char0)
+    except Exception as e:
+        logger.debug("typeDefinition failed for field %s: %s", field_name, e)
+        return None
+
+    for loc in _normalize_locations(raw):
+        stem = type_name_from_definition_location(loc)
+        if stem:
+            return stem
+
+    return None
 
 
 def resolve_field_type_when_detail_empty(
@@ -137,26 +184,4 @@ def resolve_field_type_when_detail_empty(
     line = int(start.get("line", 0))
     char = int(start.get("character", 0))
 
-    hover = None
-    try:
-        hover = client.hover(file_path, line, char)
-    except Exception as e:
-        logger.debug("hover failed for field %s: %s", field_name, e)
-
-    hover_txt = hover_result_to_text(hover)
-    parsed = parse_type_from_hover(hover_txt, field_name, language)
-    if parsed:
-        return parsed.strip()
-
-    try:
-        raw = client.type_definition(file_path, line, char)
-    except Exception as e:
-        logger.debug("typeDefinition failed for field %s: %s", field_name, e)
-        return None
-
-    for loc in _normalize_locations(raw):
-        stem = type_name_from_definition_location(loc)
-        if stem:
-            return stem
-
-    return None
+    return resolve_field_type_at_position(client, file_path, line, char, field_name, language)

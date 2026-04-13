@@ -25,9 +25,10 @@ from .storage_uploader import (
 from .scanner import scan_directory
 from .hasher import compute_file_hash
 from .lsp.client import LspClient
-from .lsp.servers.java import start_jdtls, get_initialization_options
+from .crawl.languages import get_phase1_lsp_backends, get_tier3_lsp_backends
 from .crawl.phase1 import classify_file, crawl_phase1
 from .crawl.phase2 import build_file_contents_from_batch, crawl_phase2_tier1
+from .crawl.phase2_tier3 import crawl_phase2_tier3
 from .graph_writer import GraphWriter
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,14 @@ async def process_job(payload: dict) -> None:
                         tier1_result.get("tier1_rel_candidates") or [],
                         codebase_id,
                     )
+                    _run_phase2_tier3(
+                        graph_writer,
+                        nodes,
+                        contains_edges,
+                        file_map,
+                        workspace_root,
+                        codebase_id,
+                    )
                     stats = graph_writer.get_graph_stats_for_codebase(codebase_id)
                     logger.info(
                         "process_job: graph stats for codebase_id=%s: nodes=%d relationships=%d",
@@ -177,7 +186,7 @@ async def process_job(payload: dict) -> None:
                 finally:
                     graph_writer.close()
 
-                logger.info("process_job: Phase 1 + Tier 1 completed successfully")
+                logger.info("process_job: Phase 1 + Tier 1 + Tier 3 completed successfully")
             except Exception as e:
                 logger.exception("process_job: Phase 1 failed: %s", e)
                 raise
@@ -224,45 +233,113 @@ async def process_job(payload: dict) -> None:
     logger.info("process_job ended job_id=%s", job_id)
 
 
+def _run_phase2_tier3(
+    graph_writer: GraphWriter,
+    nodes: list[dict],
+    contains_edges: list[dict],
+    file_map: dict[str, str],
+    workspace_root: str,
+    codebase_id: str,
+) -> None:
+    """
+    Phase 2 Tier 3: registry-selected LSP enrichment after Tier 1 is written.
+
+    Uses a dedicated LSP session so Phase 1 can keep its existing lifecycle.
+    """
+    if not nodes:
+        return
+    active_backends = get_tier3_lsp_backends(nodes)
+    if not active_backends:
+        logger.info("_run_phase2_tier3: no active Tier 3 language backend, skipping")
+        return
+    if len(active_backends) > 1:
+        raise NotImplementedError("Multiple Tier 3 LSP backends are not yet supported")
+
+    backend = active_backends[0]
+
+    logger.info("_run_phase2_tier3: starting %s LSP for Tier 3", backend.language)
+    process = backend.start(workspace_root)
+    client: LspClient | None = None
+    try:
+        client = LspClient(process, workspace_root)
+        init_options = backend.get_initialization_options(workspace_root)
+        client.initialize(init_options)
+        tier3_result = crawl_phase2_tier3(
+            client,
+            graph_writer,
+            nodes,
+            contains_edges,
+            file_map,
+            workspace_root,
+            codebase_id,
+        )
+        graph_writer.apply_phase2_tier3(
+            tier3_result.get("updates") or [],
+            codebase_id,
+        )
+        graph_writer.apply_phase2_tier3_relationships(
+            tier3_result.get("calls_edges") or [],
+            tier3_result.get("sets_edges") or [],
+            tier3_result.get("gets_edges") or [],
+            codebase_id,
+        )
+        logger.info(
+            "_run_phase2_tier3 done: updates=%d calls=%d sets=%d gets=%d",
+            len(tier3_result.get("updates") or []),
+            len(tier3_result.get("calls_edges") or []),
+            len(tier3_result.get("sets_edges") or []),
+            len(tier3_result.get("gets_edges") or []),
+        )
+    except Exception as e:
+        logger.exception("_run_phase2_tier3 failed: %s", e)
+        raise
+    finally:
+        if client:
+            client.close()
+        logger.info("_run_phase2_tier3: LSP client closed")
+
+
 def _run_phase1(
     classified_files: dict[str, list[tuple[str, str]]],
     codebase_id: str,
     workspace_root: str,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Run Phase 1 crawl: whole-file nodes, optional Java LSP for ``File`` entries.
+    Run Phase 1 crawl: whole-file nodes, optional registry-selected LSP for ``File`` entries.
 
-    Starts jdtls only when at least one ``.java`` file is present under ``File``.
-    Otherwise passes ``client=None`` (placeholders / non-Java whole-file nodes only).
+    Starts a registered backend only when at least one matching source file is present
+    under ``File``. Otherwise passes ``client=None``.
     """
     file_entries = classified_files.get("File", [])
-    needs_java_lsp = any(
-        rel.lower().endswith(".java") for _, rel in file_entries
-    )
+    active_backends = get_phase1_lsp_backends([rel for _, rel in file_entries])
 
-    if not needs_java_lsp:
-        logger.info("_run_phase1: no Java sources; Phase 1 without LSP")
+    if not active_backends:
+        logger.info("_run_phase1: no active LSP-backed sources; Phase 1 without LSP")
         return crawl_phase1(
             None,
             classified_files,
             codebase_id,
-            default_lsp_language="java",
+            active_lsp_languages=set(),
         )
+    if len(active_backends) > 1:
+        raise NotImplementedError("Multiple Phase 1 LSP backends are not yet supported")
 
-    logger.info("_run_phase1: starting Java LSP for documentSymbol")
-    process = start_jdtls(workspace_root)
+    backend = active_backends[0]
+
+    logger.info("_run_phase1: starting %s LSP for documentSymbol", backend.language)
+    process = backend.start(workspace_root)
     client: LspClient | None = None
 
     try:
         client = LspClient(process, workspace_root)
-        init_options = get_initialization_options(workspace_root)
+        init_options = backend.get_initialization_options(workspace_root)
         client.initialize(init_options)
 
         nodes, contains_edges = crawl_phase1(
             client,
             classified_files,
             codebase_id,
-            default_lsp_language="java",
+            active_lsp_languages={backend.language},
         )
         logger.info(
             "_run_phase1 done: nodes=%d contains_edges=%d",

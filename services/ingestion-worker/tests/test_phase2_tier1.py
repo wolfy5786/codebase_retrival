@@ -11,14 +11,16 @@ if str(_ROOT) not in sys.path:
 
 from src.crawl.phase2 import (
     _compute_level,
+    build_file_contents_from_batch,
+    crawl_phase2_tier1,
+    file_key_for_node,
+)
+from src.crawl.languages.java.phase2_tier1_strategy import (
     _extract_java_type_header,
     _java_simple_type_name,
     _java_tier1_rel_candidates,
     _parse_java_parameter_types,
     _split_java_type_list,
-    build_file_contents_from_batch,
-    crawl_phase2_tier1,
-    file_key_for_node,
 )
 from src.graph_writer import GraphWriter
 

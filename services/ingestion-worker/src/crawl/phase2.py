@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from .languages import get_tier1_strategy
 from ..extractor import get_mapper
 
 logger = logging.getLogger(__name__)
@@ -122,368 +122,6 @@ def _compute_level(semantic: set[str]) -> int:
     return best
 
 
-# ── Java: regex additive labels ─────────────────────────────────────────────
-
-_JAVA_TESTING = re.compile(
-    r"@Test\b|@Before\b|@After\b|@BeforeEach\b|@AfterEach\b|@ParameterizedTest\b",
-)
-_JAVA_ACCEPT_NET = re.compile(
-    r"@RequestMapping\b|@GetMapping\b|@PostMapping\b|@PutMapping\b|@DeleteMapping\b|@PatchMapping\b|@RestController\b",
-)
-_JAVA_SENDS_NET = re.compile(
-    r"\bHttpURLConnection\b|\bRestTemplate\b|\bWebClient\b|\bOkHttpClient\b",
-)
-_JAVA_DB = re.compile(
-    r"@Repository\b|@Query\b|@Entity\b|@Table\b|javax\.sql\.|java\.sql\.|jdbc\.|JpaRepository\b",
-)
-
-
-def _java_regex_labels(
-    node: dict,
-    declaration_block: str,
-    body_snippet: str,
-) -> list[str]:
-    lang = (node.get("language") or "").lower()
-    if lang != "java":
-        return []
-    kind = node.get("kind")
-    if kind is None:
-        return []
-    out: list[str] = []
-    block = f"{declaration_block}\n{body_snippet}"
-
-    if _JAVA_TESTING.search(block):
-        out.append("Testing")
-    if kind in (5, 6) and _JAVA_ACCEPT_NET.search(block):
-        out.append("Accept_call_over_network")
-    if kind in (5, 6, 12) and _JAVA_SENDS_NET.search(body_snippet):
-        out.append("Sends_data_over_network")
-    if kind in (5, 6) and _JAVA_DB.search(block):
-        out.append("Database")
-
-    return out
-
-
-# ── Java: declaration properties ─────────────────────────────────────────────
-
-_ANNOTATION_RE = re.compile(r"@(\w+)(?:\([^)]*\))?")
-
-
-def _parse_java_parameter_types(signature: str | None) -> list[str]:
-    if not signature:
-        return []
-    depth = 0
-    start = None
-    for i, ch in enumerate(signature):
-        if ch == "(":
-            depth += 1
-            if depth == 1:
-                start = i + 1
-        elif ch == ")":
-            if depth == 1 and start is not None:
-                inner = signature[start:i]
-                return _split_java_params(inner)
-            depth -= 1
-    return []
-
-
-def _split_java_params(inner: str) -> list[str]:
-    if not inner.strip():
-        return []
-    parts: list[str] = []
-    cur: list[str] = []
-    depth = 0
-    for ch in inner:
-        if ch == "<":
-            depth += 1
-        elif ch == ">":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            parts.append("".join(cur).strip())
-            cur = []
-            continue
-        cur.append(ch)
-    parts.append("".join(cur).strip())
-    types: list[str] = []
-    for p in parts:
-        if not p:
-            continue
-        p = re.sub(r"\s*\.\.\.\s*$", "", p).strip()
-        tokens = p.split()
-        if len(tokens) >= 2:
-            types.append(" ".join(tokens[:-1]))
-        elif len(tokens) == 1:
-            types.append(tokens[0])
-    return types
-
-
-def _java_return_type_from_line(line: str, name: str) -> str | None:
-    """Best-effort return type for methods (``public Foo bar()``)."""
-    s = line.strip()
-    if not s or not name:
-        return None
-    # strip annotations at start
-    while s.startswith("@"):
-        depth = 0
-        i = 0
-        while i < len(s):
-            if s[i] == "(":
-                depth += 1
-            elif s[i] == ")" and depth > 0:
-                depth -= 1
-            elif s[i] in " \t" and depth == 0 and i > 0 and s[i - 1] != "@":
-                break
-            i += 1
-        s = s[i:].lstrip()
-    for mod in (
-        "public ",
-        "private ",
-        "protected ",
-        "static ",
-        "final ",
-        "abstract ",
-        "synchronized ",
-        "native ",
-        "default ",
-        "strictfp ",
-    ):
-        while s.startswith(mod):
-            s = s[len(mod) :].lstrip()
-    # generic return type
-    if s.startswith("<"):
-        depth = 1
-        j = 1
-        while j < len(s) and depth:
-            if s[j] == "<":
-                depth += 1
-            elif s[j] == ">":
-                depth -= 1
-            j += 1
-        s = s[j:].lstrip()
-    # type + name + (
-    idx = s.find("(")
-    if idx == -1:
-        return None
-    before = s[:idx].strip()
-    if not before:
-        return None
-    parts = before.split()
-    if len(parts) >= 2 and parts[-1] == name:
-        return " ".join(parts[:-1])
-    return None
-
-
-def _extract_java_tier1_properties(
-    node: dict,
-    lines: list[str],
-) -> dict[str, Any]:
-    kind = node.get("kind")
-    if kind is None:
-        return {}
-    start = int(node.get("start_line") or 1)
-    name = node.get("name") or ""
-    sig = node.get("signature") or ""
-    lo = max(0, start - 4)
-    hi = min(len(lines), start + 2)
-    block_lines = lines[lo:hi]
-    declaration_block = "\n".join(block_lines)
-    body_hi = min(len(lines), start + 40)
-    body_snippet = "\n".join(lines[start - 1 : body_hi])
-
-    annotations = list(dict.fromkeys(_ANNOTATION_RE.findall(declaration_block)))
-    access_modifier = None
-    m_acc = re.search(r"\b(public|private|protected)\b", declaration_block)
-    if m_acc:
-        access_modifier = m_acc.group(1)
-
-    modifiers: list[str] = []
-    for mod in (
-        "static",
-        "abstract",
-        "final",
-        "synchronized",
-        "native",
-        "volatile",
-        "default",
-        "strictfp",
-    ):
-        if re.search(rf"\b{mod}\b", declaration_block):
-            modifiers.append(mod)
-
-    props: dict[str, Any] = {
-        "annotations": annotations,
-        "access_modifier": access_modifier,
-        "modifiers": modifiers,
-        "is_static": "static" in modifiers,
-    }
-
-    if kind in (6, 9, 12):
-        props["parameter_types"] = _parse_java_parameter_types(sig)
-        if kind != 9:
-            line0 = lines[start - 1] if 0 < start <= len(lines) else ""
-            props["return_type"] = _java_return_type_from_line(line0, name)
-
-    if kind == 5:
-        m_abs = re.search(r"\babstract\b", declaration_block)
-        if m_abs and "abstract" not in modifiers:
-            modifiers.append("abstract")
-            props["modifiers"] = modifiers
-
-    return props
-
-
-def _extract_tier1_properties(
-    node: dict,
-    file_text: str,
-) -> dict[str, Any]:
-    lang = (node.get("language") or "").lower()
-    lines = file_text.splitlines()
-    if lang == "java":
-        return _extract_java_tier1_properties(node, lines)
-    return {}
-
-
-# ── Java: Tier 1 INHERITS / IMPLEMENTS (declaration regex) ──────────────────
-
-
-def _strip_java_generics(s: str) -> str:
-    """Remove top-level ``<...>`` segments for simple-name extraction."""
-    out: list[str] = []
-    i = 0
-    while i < len(s):
-        if s[i] == "<":
-            depth = 1
-            i += 1
-            while i < len(s) and depth:
-                if s[i] == "<":
-                    depth += 1
-                elif s[i] == ">":
-                    depth -= 1
-                i += 1
-            continue
-        out.append(s[i])
-        i += 1
-    return "".join(out)
-
-
-def _java_simple_type_name(raw: str) -> str:
-    """Map a type reference string to the simple name used for graph ``name`` lookup."""
-    if not raw:
-        return ""
-    s = raw.strip()
-    while s.startswith("@"):
-        depth = 0
-        j = 0
-        while j < len(s):
-            if s[j] == "(":
-                depth += 1
-            elif s[j] == ")" and depth > 0:
-                depth -= 1
-            elif s[j] in " \t" and depth == 0 and j > 0:
-                break
-            j += 1
-        s = s[j:].strip()
-    s = _strip_java_generics(s)
-    s = s.strip()
-    if not s:
-        return ""
-    return s.split(".")[-1].strip()
-
-
-def _split_java_type_list(s: str) -> list[str]:
-    """Split a comma-separated type list respecting angle-bracket nesting."""
-    s = s.strip().rstrip(",")
-    if not s:
-        return []
-    parts: list[str] = []
-    cur: list[str] = []
-    depth = 0
-    for ch in s:
-        if ch == "<":
-            depth += 1
-        elif ch == ">":
-            depth = max(0, depth - 1)
-        elif ch == "," and depth == 0:
-            parts.append("".join(cur).strip())
-            cur = []
-            continue
-        cur.append(ch)
-    parts.append("".join(cur).strip())
-    return [p for p in parts if p]
-
-
-def _extract_java_type_header(lines: list[str], start_line: int, max_lines: int = 40) -> str:
-    """
-    Collect class / interface / enum header lines from ``start_line`` (1-based)
-    through the line that contains ``{``.
-    """
-    if not lines or start_line < 1:
-        return ""
-    i = start_line - 1
-    end = min(len(lines), start_line - 1 + max_lines)
-    parts: list[str] = []
-    while i < end:
-        parts.append(lines[i])
-        if "{" in lines[i]:
-            break
-        i += 1
-    return "\n".join(parts)
-
-
-def _java_tier1_rel_candidates(kind: int, header: str) -> list[dict[str, str]]:
-    """
-    Parse Java declaration header for ``extends`` / ``implements``.
-
-    Returns dicts with ``rel_type`` in ``INHERITS``, ``IMPLEMENTS`` and ``target_name``
-    (simple name for resolution against ``CodeNode.name``).
-    """
-    header_one = " ".join(header.split())
-    if not header_one:
-        return []
-
-    is_enum = bool(re.search(r"\benum\s+\w+", header_one))
-    is_interface = kind == 11
-
-    out: list[dict[str, str]] = []
-
-    if kind in (5, 10) and not is_interface:
-        m_imp = re.search(r"\bimplements\s+(.+?)(?=\s*\{)", header_one)
-        if m_imp:
-            for t in _split_java_type_list(m_imp.group(1)):
-                sn = _java_simple_type_name(t)
-                if sn:
-                    out.append({"rel_type": "IMPLEMENTS", "target_name": sn})
-
-    if is_enum:
-        return out
-
-    if is_interface:
-        m_ext = re.search(
-            r"\bextends\s+(.+?)(?=\s*\{)",
-            header_one,
-        )
-        if m_ext:
-            for t in _split_java_type_list(m_ext.group(1)):
-                sn = _java_simple_type_name(t)
-                if sn:
-                    out.append({"rel_type": "INHERITS", "target_name": sn})
-        return out
-
-    # class (kind 5): extends + implements (implements already added above)
-    if kind == 5:
-        m_ext = re.search(
-            r"\bextends\s+(.+?)(?=\s+implements\s+|\s*\{)",
-            header_one,
-        )
-        if m_ext:
-            clause = m_ext.group(1).strip()
-            sn = _java_simple_type_name(clause)
-            if sn:
-                out.append({"rel_type": "INHERITS", "target_name": sn})
-
-    return out
-
-
 # ── public API ───────────────────────────────────────────────────────────────
 
 
@@ -524,7 +162,7 @@ def crawl_phase2_tier1(
             updates.append({"id": nid, "labels_to_add": [], "properties": props})
             continue
 
-        lang = (node.get("language") or "java").lower()
+        lang = (node.get("language") or "").lower()
         mapper = get_mapper(lang)
         parent_id = parent_of.get(nid)
         parent_semantic = resolved_semantic.get(parent_id) if parent_id else None
@@ -545,20 +183,13 @@ def crawl_phase2_tier1(
         rel_path = node.get("path") or ""
         fkey = file_key_for_node(workspace_root, rel_path)
         text = file_contents.get(fkey, "")
-        lines = text.splitlines() if text else []
-        start = int(node.get("start_line") or 1)
-        lo = max(0, start - 4)
-        hi = min(len(lines), start + 2)
-        declaration_block = "\n".join(lines[lo:hi]) if lines else ""
-        body_hi = min(len(lines), start + 40)
-        body_snippet = "\n".join(lines[start - 1 : body_hi]) if lines else ""
-
-        regex_extra = _java_regex_labels(node, declaration_block, body_snippet)
+        strategy = get_tier1_strategy(lang)
+        regex_extra = strategy.extra_labels(node, text)
 
         combined = set(mapped) | set(regex_extra)
         labels_to_add = sorted(combined - existing)
 
-        props = _extract_tier1_properties(node, text)
+        props = strategy.extract_properties(node, text)
         props["level"] = _compute_level(combined)
 
         updates.append({
@@ -567,15 +198,12 @@ def crawl_phase2_tier1(
             "properties": props,
         })
 
-        if lang == "java" and kind in (5, 10, 11) and lines:
-            start_ln = int(node.get("start_line") or 1)
-            header = _extract_java_type_header(lines, start_ln)
-            for c in _java_tier1_rel_candidates(kind, header):
-                tier1_rel_candidates.append({
-                    "from_id": nid,
-                    "target_name": c["target_name"],
-                    "rel_type": c["rel_type"],
-                })
+        for c in strategy.relationship_candidates(node, text):
+            tier1_rel_candidates.append({
+                "from_id": nid,
+                "target_name": c["target_name"],
+                "rel_type": c["rel_type"],
+            })
 
     logger.info(
         "crawl_phase2_tier1: nodes=%d updates=%d tier1_rel_candidates=%d",
@@ -594,8 +222,4 @@ __all__ = [
     "file_key_for_node",
     "build_file_contents_from_batch",
     "crawl_phase2_tier1",
-    "_java_tier1_rel_candidates",
-    "_extract_java_type_header",
-    "_java_simple_type_name",
-    "_split_java_type_list",
 ]

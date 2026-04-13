@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from .languages import get_phase1_strategy_for_file
 from ..lsp.client import LspClient
 
 logger = logging.getLogger(__name__)
@@ -141,20 +142,20 @@ def _extract_signature(symbol: dict) -> str:
     return name
 
 
-def _get_language_id_for_lsp(rel_path: str, default_lsp_language: str) -> str:
-    """languageId for textDocument/didOpen; align with active LSP server."""
-    ext = Path(rel_path).suffix.lower()
-    if default_lsp_language == "java" and ext == ".java":
-        return "java"
-    # When multi-language LSP is wired, extend this mapping.
+def _get_language_id_for_lsp(rel_path: str) -> str:
+    """languageId for textDocument/didOpen from the registered file strategy."""
+    strategy = get_phase1_strategy_for_file(rel_path)
+    if strategy.supports_file(rel_path):
+        return strategy.lsp_language_id(rel_path)
     return _language_for_source_file(rel_path)
 
 
-def _should_use_lsp_for_file(rel_path: str, default_lsp_language: str) -> bool:
-    """True if the current pipeline runs an LSP server for this file."""
-    if default_lsp_language == "java":
-        return rel_path.lower().endswith(".java")
-    return False
+def _should_use_lsp_for_file(rel_path: str, active_lsp_languages: set[str]) -> bool:
+    """True if the current pipeline has an active backend for this file."""
+    strategy = get_phase1_strategy_for_file(rel_path)
+    if not strategy.supports_file(rel_path):
+        return False
+    return strategy.needs_lsp(rel_path) and strategy.language in active_lsp_languages
 
 
 def _extract_nodes_and_contains(
@@ -171,7 +172,11 @@ def _extract_nodes_and_contains(
 
     for order, symbol in enumerate(symbols, start=sibling_order_start):
         name = symbol.get("name", "")
-        range_info = symbol.get("range", {})
+        range_info = symbol.get("range", {}) or {}
+        selection_info = symbol.get("selectionRange") or range_info
+        sel_start = selection_info.get("start") or range_info.get("start", {}) or {}
+        selection_line = int(sel_start.get("line", 0)) + 1
+        selection_character = int(sel_start.get("character", 0))
         start_line = range_info.get("start", {}).get("line", 0) + 1
         end_line = range_info.get("end", {}).get("line", 0) + 1
         kind = symbol.get("kind")
@@ -191,6 +196,8 @@ def _extract_nodes_and_contains(
             "storage_ref": _storage_ref(codebase_id, rel_path),
             "start_line": start_line,
             "end_line": end_line,
+            "selection_line": selection_line,
+            "selection_character": selection_character,
             "kind": kind,
             "signature": _extract_signature(symbol),
             "detail": detail,
@@ -278,12 +285,11 @@ def _process_one_lsp_file(
     abs_path: str,
     rel_path: str,
     codebase_id: str,
-    default_lsp_language: str,
     lock: threading.Lock,
 ) -> tuple[list[dict], list[dict]]:
     """didOpen + documentSymbol for one file; returns nodes and CONTAINS edges."""
     language = _language_for_source_file(rel_path)
-    lang_id = _get_language_id_for_lsp(rel_path, default_lsp_language)
+    lang_id = _get_language_id_for_lsp(rel_path)
 
     content = Path(abs_path).read_text(encoding="utf-8", errors="ignore")
 
@@ -310,7 +316,7 @@ def crawl_phase1(
     classified_files: dict[str, list[tuple[str, str]]],
     codebase_id: str,
     *,
-    default_lsp_language: str = "java",
+    active_lsp_languages: set[str] | None = None,
     max_workers: int = 4,
 ) -> tuple[list[dict], list[dict]]:
     """
@@ -321,7 +327,7 @@ def crawl_phase1(
             None if there are no LSP-backed files.
         classified_files: Maps file-type string -> list of (abs_path, rel_path).
         codebase_id: Codebase UUID.
-        default_lsp_language: Which LSP server is running ("java" only for now).
+        active_lsp_languages: Languages whose LSP backends are active for this pass.
         max_workers: Thread pool size for file-level tasks (LSP calls are locked).
 
     Returns:
@@ -329,6 +335,7 @@ def crawl_phase1(
     """
     all_nodes: list[dict] = []
     all_edges: list[dict] = []
+    active_lsp_languages = active_lsp_languages or set()
 
     # ── Whole-file nodes (no LSP) ───────────────────────────────────────────
     for ft in ("Dockerfile", "MarkupFile", "Documentation", "SQLNoSQLScript", "CICD"):
@@ -347,7 +354,7 @@ def crawl_phase1(
     placeholder_files: list[tuple[str, str]] = []
 
     for abs_path, rel_path in file_entries:
-        if client is not None and _should_use_lsp_for_file(rel_path, default_lsp_language):
+        if client is not None and _should_use_lsp_for_file(rel_path, active_lsp_languages):
             lsp_files.append((abs_path, rel_path))
         else:
             placeholder_files.append((abs_path, rel_path))
@@ -380,7 +387,7 @@ def crawl_phase1(
         "Phase 1: LSP processing %d file(s) workers=%d language=%s",
         len(lsp_files),
         workers,
-        default_lsp_language,
+        ",".join(sorted(active_lsp_languages)) or "none",
     )
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -391,7 +398,6 @@ def crawl_phase1(
                 abs_path,
                 rel_path,
                 codebase_id,
-                default_lsp_language,
                 lock,
             ): rel_path
             for abs_path, rel_path in lsp_files

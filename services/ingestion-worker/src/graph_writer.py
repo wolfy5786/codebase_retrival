@@ -17,6 +17,8 @@ class GraphWriter:
     Phase 1: structural nodes (``kind``, ``detail``, etc.) + CONTAINS.
     Phase 2 Tier 1: ``apply_phase2_tier1`` adds semantic labels and Tier-1 properties;
     ``apply_phase2_tier1_relationships`` merges Java ``INHERITS`` / ``IMPLEMENTS`` edges.
+    Phase 2 Tier 3: ``apply_phase2_tier3`` adds LSP-derived labels/properties;
+    ``apply_phase2_tier3_relationships`` merges ``CALLS`` / ``SETS`` / ``GETS``.
     """
     
     def __init__(self):
@@ -201,6 +203,57 @@ class GraphWriter:
             logger.exception("Failed to create CONTAINS edges: %s", e)
             raise
     
+    def _apply_code_node_label_property_updates(
+        self,
+        session: Any,
+        updates: list[dict],
+        codebase_id: str,
+        log_prefix: str,
+    ) -> None:
+        """Shared batch apply for Tier 1 / Tier 3 node label + property updates."""
+        by_label: dict[str, list[str]] = {}
+        prop_rows: list[dict[str, Any]] = []
+
+        for row in updates:
+            nid = row.get("id")
+            if not nid:
+                continue
+            for lb in row.get("labels_to_add") or []:
+                s = str(lb)
+                if not s or not s.replace("_", "").isalnum():
+                    logger.warning(
+                        "%s: skipping invalid label %r for %s",
+                        log_prefix,
+                        lb,
+                        nid,
+                    )
+                    continue
+                by_label.setdefault(s, []).append(nid)
+
+            props = row.get("properties") or {}
+            clean = {k: v for k, v in props.items() if v is not None}
+            if clean:
+                prop_rows.append({"id": nid, "props": clean})
+
+        for label, ids in by_label.items():
+            self._add_labels_batch(session, label, ids, codebase_id, log_prefix=log_prefix)
+
+        if prop_rows:
+            session.run(
+                """
+                UNWIND $rows AS row
+                MATCH (n:CodeNode {codebase_id: $codebase_id, id: row.id})
+                SET n += row.props
+                """,
+                rows=prop_rows,
+                codebase_id=codebase_id,
+            )
+            logger.info(
+                "%s: set properties on %d nodes",
+                log_prefix,
+                len(prop_rows),
+            )
+
     def apply_phase2_tier1(
         self,
         updates: list[dict],
@@ -224,51 +277,190 @@ class GraphWriter:
 
         try:
             with self.driver.session() as session:
-                by_label: dict[str, list[str]] = {}
-                prop_rows: list[dict[str, Any]] = []
-
-                for row in updates:
-                    nid = row.get("id")
-                    if not nid:
-                        continue
-                    for lb in row.get("labels_to_add") or []:
-                        s = str(lb)
-                        if not s or not s.replace("_", "").isalnum():
-                            logger.warning(
-                                "apply_phase2_tier1: skipping invalid label %r for %s",
-                                lb,
-                                nid,
-                            )
-                            continue
-                        by_label.setdefault(s, []).append(nid)
-
-                    props = row.get("properties") or {}
-                    clean = {k: v for k, v in props.items() if v is not None}
-                    if clean:
-                        prop_rows.append({"id": nid, "props": clean})
-
-                for label, ids in by_label.items():
-                    self._add_labels_batch(session, label, ids, codebase_id)
-
-                if prop_rows:
-                    session.run(
-                        """
-                        UNWIND $rows AS row
-                        MATCH (n:CodeNode {codebase_id: $codebase_id, id: row.id})
-                        SET n += row.props
-                        """,
-                        rows=prop_rows,
-                        codebase_id=codebase_id,
-                    )
-                    logger.info(
-                        "apply_phase2_tier1: set properties on %d nodes",
-                        len(prop_rows),
-                    )
+                self._apply_code_node_label_property_updates(
+                    session, updates, codebase_id, "apply_phase2_tier1"
+                )
 
             logger.info("apply_phase2_tier1 completed: codebase_id=%s", codebase_id)
 
         except Exception as e:
             logger.exception("apply_phase2_tier1 failed: %s", e)
+            raise
+
+    def apply_phase2_tier3(
+        self,
+        updates: list[dict],
+        codebase_id: str,
+    ) -> None:
+        """
+        Apply Phase 2 Tier 3: LSP-derived labels and properties (same row shape as Tier 1).
+        """
+        if not updates:
+            logger.info("apply_phase2_tier3: no updates (codebase_id=%s)", codebase_id)
+            return
+
+        logger.info(
+            "apply_phase2_tier3 started: rows=%d codebase_id=%s",
+            len(updates),
+            codebase_id,
+        )
+
+        try:
+            with self.driver.session() as session:
+                self._apply_code_node_label_property_updates(
+                    session, updates, codebase_id, "apply_phase2_tier3"
+                )
+
+            logger.info("apply_phase2_tier3 completed: codebase_id=%s", codebase_id)
+
+        except Exception as e:
+            logger.exception("apply_phase2_tier3 failed: %s", e)
+            raise
+
+    def find_code_node_ids_covering_line(
+        self,
+        codebase_id: str,
+        path: str,
+        line_1based: int,
+    ) -> list[str]:
+        """
+        Return node ids whose line range contains ``line_1based`` (1-based, inclusive).
+        Used to resolve LSP locations to existing ``CodeNode`` rows.
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(
+                    """
+                    MATCH (n:CodeNode {codebase_id: $codebase_id, path: $path})
+                    WHERE n.start_line <= $line AND n.end_line >= $line
+                    RETURN n.id AS id
+                    """,
+                    codebase_id=codebase_id,
+                    path=path,
+                    line=line_1based,
+                )
+                return [r["id"] for r in result if r.get("id")]
+        except Exception as e:
+            logger.exception("find_code_node_ids_covering_line failed: %s", e)
+            raise
+
+    def find_enclosing_callable_id(
+        self,
+        codebase_id: str,
+        path: str,
+        line_1based: int,
+    ) -> str | None:
+        """
+        Smallest enclosing callable (``kind`` in 6, 9, 12) for ``line_1based``.
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(
+                    """
+                    MATCH (n:CodeNode {codebase_id: $codebase_id, path: $path})
+                    WHERE n.kind IN [6, 9, 12]
+                      AND n.start_line <= $line AND n.end_line >= $line
+                    WITH n ORDER BY (n.end_line - n.start_line) ASC
+                    LIMIT 1
+                    RETURN n.id AS id
+                    """,
+                    codebase_id=codebase_id,
+                    path=path,
+                    line=line_1based,
+                )
+                rec = result.single()
+                return rec["id"] if rec else None
+        except Exception as e:
+            logger.exception("find_enclosing_callable_id failed: %s", e)
+            raise
+
+    def apply_phase2_tier3_relationships(
+        self,
+        calls: list[dict],
+        sets_edges: list[dict],
+        gets_edges: list[dict],
+        codebase_id: str,
+    ) -> None:
+        """
+        Merge Tier 3 ``CALLS``, ``SETS``, and ``GETS`` edges.
+
+        Each item: ``from_id``, ``to_id``, optional ``line``, ``column``, ``member_name``.
+        """
+        if not calls and not sets_edges and not gets_edges:
+            logger.info(
+                "apply_phase2_tier3_relationships: no edges (codebase_id=%s)",
+                codebase_id,
+            )
+            return
+
+        logger.info(
+            "apply_phase2_tier3_relationships: calls=%d sets=%d gets=%d codebase_id=%s",
+            len(calls),
+            len(sets_edges),
+            len(gets_edges),
+            codebase_id,
+        )
+
+        try:
+            with self.driver.session() as session:
+                if calls:
+                    session.run(
+                        """
+                        UNWIND $pairs AS p
+                        MATCH (a:CodeNode {codebase_id: $codebase_id, id: p.from_id})
+                        MATCH (b:CodeNode {codebase_id: $codebase_id, id: p.to_id})
+                        MERGE (a)-[r:CALLS]->(b)
+                        SET r.line = p.line, r.column = p.column
+                        """,
+                        pairs=calls,
+                        codebase_id=codebase_id,
+                    )
+                    logger.info(
+                        "apply_phase2_tier3_relationships: merged %d CALLS edge(s)",
+                        len(calls),
+                    )
+
+                if sets_edges:
+                    session.run(
+                        """
+                        UNWIND $pairs AS p
+                        MATCH (a:CodeNode {codebase_id: $codebase_id, id: p.from_id})
+                        MATCH (b:CodeNode {codebase_id: $codebase_id, id: p.to_id})
+                        MERGE (a)-[r:SETS]->(b)
+                        SET r.line = p.line, r.member_name = p.member_name
+                        """,
+                        pairs=sets_edges,
+                        codebase_id=codebase_id,
+                    )
+                    logger.info(
+                        "apply_phase2_tier3_relationships: merged %d SETS edge(s)",
+                        len(sets_edges),
+                    )
+
+                if gets_edges:
+                    session.run(
+                        """
+                        UNWIND $pairs AS p
+                        MATCH (a:CodeNode {codebase_id: $codebase_id, id: p.from_id})
+                        MATCH (b:CodeNode {codebase_id: $codebase_id, id: p.to_id})
+                        MERGE (a)-[r:GETS]->(b)
+                        SET r.line = p.line, r.member_name = p.member_name
+                        """,
+                        pairs=gets_edges,
+                        codebase_id=codebase_id,
+                    )
+                    logger.info(
+                        "apply_phase2_tier3_relationships: merged %d GETS edge(s)",
+                        len(gets_edges),
+                    )
+
+            logger.info(
+                "apply_phase2_tier3_relationships completed: codebase_id=%s",
+                codebase_id,
+            )
+
+        except Exception as e:
+            logger.exception("apply_phase2_tier3_relationships failed: %s", e)
             raise
 
     def apply_phase2_tier1_relationships(
@@ -413,6 +605,7 @@ class GraphWriter:
         label: str,
         node_ids: list[str],
         codebase_id: str,
+        log_prefix: str = "apply_phase2_tier1",
     ) -> None:
         """SET static label token on matching CodeNodes (one label per batch)."""
         if not node_ids:
@@ -424,7 +617,8 @@ class GraphWriter:
             """
         session.run(query, ids=node_ids, codebase_id=codebase_id)
         logger.info(
-            "apply_phase2_tier1: added label %s to %d nodes",
+            "%s: added label %s to %d nodes",
+            log_prefix,
             label,
             len(node_ids),
         )
