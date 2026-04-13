@@ -50,6 +50,7 @@ CodeGraph ingests an entire repository into a Neo4j knowledge graph, embeds ever
 ## Demo Graph
 <img width="406" height="532" alt="visualisation" src="https://github.com/user-attachments/assets/a192f1e2-62d6-452f-adf5-c635898688f5" />
 <img width="406" height="532" alt="visualisation1" src="https://github.com/user-attachments/assets/47a34594-a208-4f67-8ff9-428962f2d036" />
+<img width="521" height="532" alt="image" src="https://github.com/user-attachments/assets/84503f7f-a81c-4320-bdbe-473943143010" />
 
 ---
 ## System Architecture
